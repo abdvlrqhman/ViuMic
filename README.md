@@ -27,14 +27,20 @@ viumic record raw.wav --seconds 20      raw mic sample, for bug reports
 
 ## Build
 
-Requires Rust 1.95+, MSVC (Visual Studio Build Tools), LLVM (for the pitch-shifter bindings), and
-network access on the first build (the `ort` crate downloads a prebuilt ONNX Runtime and links it
-statically, so there's no DLL to ship):
+Requires Rust 1.95+, MSVC (Visual Studio Build Tools), LLVM (for the pitch-shifter bindings),
+Node 22+ with pnpm (for the app), and network access on the first build (the `ort` crate downloads
+a prebuilt ONNX Runtime and links it statically, so there's no DLL to ship):
 
 ```
 winget install LLVM.LLVM
-cargo build --release
+pnpm install
+pnpm dev                  # desktop app with hot reload
+pnpm build                # installer: target/release/bundle/nsis/
+cargo build --release -p viumic-cli   # just the CLI
 ```
+
+Layout: `crates/engine` (audio + models), `crates/cli`, `src-tauri` (desktop app backend),
+`ui` (Svelte 5 frontend), `models` (embedded DPDFNet).
 
 ## License
 

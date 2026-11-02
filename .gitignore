@@ -1,2 +1,4 @@
 /target
 *.wav
+node_modules/
+/ui/dist/

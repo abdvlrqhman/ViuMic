@@ -27,11 +27,15 @@ pub const CABLE_INPUT: &str = "CABLE Input";
 pub const CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
 const MS: usize = SAMPLE_RATE as usize / 1000;
-/// The player waits for this much audio before (re)starting, to absorb callback jitter.
-const PRIME: usize = 20 * MS;
-/// Above this much queued output, a hop is dropped: bounds latency when the mic and the
-/// output device clocks drift apart.
-const HIGH_WATER: usize = 60 * MS;
+/// Adaptive jitter buffer: the player waits for `prime` audio before (re)starting. It starts
+/// small and grows a step after each underrun, so latency only rises on setups whose
+/// callbacks are uneven (VB-CABLE: 4 underruns in 10 min at a fixed 20 ms).
+const PRIME_START: usize = 20 * MS;
+const PRIME_STEP: usize = 5 * MS;
+const PRIME_MAX: usize = 50 * MS;
+/// More than `prime` + this queued: drop a hop. Bounds latency when the mic and output
+/// clocks drift apart.
+const DRIFT_MARGIN: usize = 40 * MS;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -141,6 +145,8 @@ struct Shared {
     buffered: AtomicU32,
     dropped: AtomicU32,
     underruns: AtomicU32,
+    /// Current jitter-buffer target, in samples (see `PRIME_START`).
+    prime: AtomicU32,
     xruns: AtomicU32,
     load: AtomicF32,
     error: Mutex<Option<String>>,
@@ -210,6 +216,7 @@ impl Engine {
         shared.enabled.store(cfg.enabled, Relaxed);
         shared.strength_db.set(cfg.strength_db);
         shared.depth.set(cfg.depth);
+        shared.prime.store(PRIME_START as u32, Relaxed);
 
         let (mut mic_tx, mic_rx) = RingBuffer::<f32>::new(SAMPLE_RATE as usize);
         let (out_tx, mut out_rx) = RingBuffer::<f32>::new(SAMPLE_RATE as usize);
@@ -246,7 +253,7 @@ impl Engine {
                     t.playback.saturating_duration_since(t.callback).as_micros() as u32,
                     Relaxed,
                 );
-                if priming && out_rx.slots() < PRIME {
+                if priming && out_rx.slots() < sh.prime.load(Relaxed) as usize {
                     data.fill(0.0);
                     return;
                 }
@@ -260,6 +267,8 @@ impl Engine {
                 }
                 if priming {
                     sh.underruns.fetch_add(1, Relaxed);
+                    let grown = (sh.prime.load(Relaxed) as usize + PRIME_STEP).min(PRIME_MAX);
+                    sh.prime.store(grown as u32, Relaxed);
                 }
             },
             stream_error(&shared),
@@ -358,6 +367,7 @@ fn dsp_loop(
 ) {
     boost_thread_priority();
     let (mut input, mut clean, mut output) = ([0.0; HOP], [0.0; HOP], [0.0; HOP]);
+    let mut limiter = dynamics::Limiter::default();
     while sh.running.load(Relaxed) {
         let Ok(chunk) = mic.read_chunk(HOP) else {
             thread::sleep(Duration::from_millis(1));
@@ -380,6 +390,7 @@ fn dsp_loop(
             clean = input;
         }
         deep.process(sh.depth.get(), &clean, &mut output);
+        limiter.apply(&mut output);
         sh.load
             .max(started.elapsed().as_secs_f32() / (HOP as f32 / SAMPLE_RATE as f32));
         sh.in_peak.max(peak(&input));
@@ -388,7 +399,7 @@ fn dsp_loop(
         let queued = out.buffer().capacity() - out.slots();
         sh.buffered.store((mic.slots() + queued) as u32, Relaxed);
         // ponytail: drop a hop on clock drift; switch to adaptive resampling if clicks are audible.
-        if queued > HIGH_WATER {
+        if queued > sh.prime.load(Relaxed) as usize + DRIFT_MARGIN {
             sh.dropped.fetch_add(HOP as u32, Relaxed);
             continue;
         }

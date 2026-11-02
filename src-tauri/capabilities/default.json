@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the ViuMic window may do",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://vb-audio.com/*" }, { "url": "ms-settings:*" }]
+    }
+  ]
+}

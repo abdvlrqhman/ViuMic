@@ -1,7 +1,41 @@
-//! Downward expander for the RNNoise path: below a level threshold, quiet gets quieter, so
-//! the noise RNNoise leaves in pauses sinks while normal speech is untouched. Tuned by ear.
+//! Level control after the denoiser:
+//! - Expander (RNNoise path): below a level threshold, quiet gets quieter, so the noise
+//!   RNNoise leaves in pauses sinks while normal speech is untouched. Tuned by ear.
+//! - Limiter (always, last): no sample sent to the cable ever exceeds the ceiling.
 
-use crate::HOP;
+use crate::{HOP, SAMPLE_RATE};
+
+/// Output ceiling, -1 dBFS: the cable and the apps behind it must never clip.
+const CEILING: f32 = 0.891;
+/// Limiter release time constant: gain recovers smoothly instead of pumping.
+const LIMIT_RELEASE_S: f32 = 0.05;
+
+/// Peak limiter with instant attack (no lookahead, no added delay) and smooth release.
+pub(crate) struct Limiter {
+    env: f32,
+    release: f32,
+}
+
+impl Default for Limiter {
+    fn default() -> Self {
+        Self {
+            env: 0.0,
+            release: (-1.0 / (LIMIT_RELEASE_S * SAMPLE_RATE as f32)).exp(),
+        }
+    }
+}
+
+impl Limiter {
+    pub(crate) fn apply(&mut self, x: &mut [f32]) {
+        for s in x {
+            // A new peak sets the envelope to itself, so that sample lands exactly on the ceiling.
+            self.env = s.abs().max(self.env * self.release);
+            if self.env > CEILING {
+                *s *= CEILING / self.env;
+            }
+        }
+    }
+}
 
 /// Below this output level (dBFS), the signal is pushed down...
 const EXPAND_BELOW_DB: f32 = -45.0;
@@ -42,5 +76,28 @@ impl Expander {
             *s *= start + (gain - start) * ((i + 1) as f32 / len as f32).min(1.0);
         }
         self.gain = gain;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limiter_holds_ceiling_and_leaves_normal_levels() {
+        let sine = |amp: f32| -> Vec<f32> {
+            (0..SAMPLE_RATE as usize)
+                .map(|i| amp * (i as f32 * 0.05).sin())
+                .collect()
+        };
+        let mut loud = sine(2.0);
+        Limiter::default().apply(&mut loud);
+        let peak = loud.iter().fold(0f32, |m, s| m.max(s.abs()));
+        assert!(peak <= CEILING + 1e-6, "peak {peak}");
+
+        let quiet = sine(0.5);
+        let mut out = quiet.clone();
+        Limiter::default().apply(&mut out);
+        assert_eq!(out, quiet);
     }
 }

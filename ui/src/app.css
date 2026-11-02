@@ -1,0 +1,60 @@
+/* Palette from the logo; the two accents carry meaning: lavender = raw mic, mint = clean voice. */
+:root {
+  --bg: #12163a;
+  --surface: #1a1f4d;
+  --line: #2a3170;
+  --text: #e8ebff;
+  --text-dim: #9aa1d4;
+  --noise: #7c84c2;
+  --clean: #5ef0c6;
+  --clean-deep: #1fc7a3;
+  --warn: #ffc56b;
+
+  --font: 'Saira Variable', system-ui, sans-serif;
+  /* Scale: 12 / 14 / 17 / 21 (ratio ~1.2). */
+  --step--1: 12px;
+  --step-0: 14px;
+  --step-1: 17px;
+  --step-2: 21px;
+
+  color-scheme: dark;
+  font-family: var(--font);
+  font-size: var(--step-0);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  /* A desktop tool, not a document: no text-selection highlight while dragging sliders. */
+  user-select: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--clean);
+  outline-offset: 2px;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

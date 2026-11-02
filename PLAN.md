@@ -118,16 +118,18 @@ The original target was ≤ 80 ms total. DPDFNet overshoots it by ~15 ms, a trad
 4. **DPDFNet gates:** a release-build 10-min soak into VB-CABLE (watch `load`, `dropped`, `underruns`), and an ear test on desk knocks (DPDFNet hasn't been judged on knocks yet).
 5. Output limiter: the user's mic clips at the input and output peaks reach 0 dBFS. Add a simple peak limiter before the cable.
 
-### Phase 2: Tauri app (3–4 days)
+### Phase 2: Tauri app ✅ built 2026-11-02 (user testing now)
 
-1. Scaffold Tauri 2.12 + Svelte 5 + TypeScript.
-2. Commands: `list_devices`, `get_settings`, `set_settings` (save and apply).
-3. Meters: a `tauri::ipc::Channel` at 30 Hz.
-4. Settings: a JSON file in `app_config_dir`.
-5. Tray: on/off toggle, show, quit. Closing the window hides it.
-6. Single instance, start with Windows.
-7. Banner when VB-CABLE is missing, with a link and setup text.
-8. Banner when VB-CABLE is the Windows **default output or input**. Installing it silently makes it both, so the user hears nothing and their default mic becomes the cable. Link to Settings → Sound.
+Root pnpm workspace (`pnpm dev` / `pnpm build`). `src-tauri` is a workspace crate; `ui` is Svelte 5 + Vite + TS (no SvelteKit), with the Saira font bundled locally.
+
+1. ✅ Commands: `get_state`, `set_settings` (save and apply live; device/model/hum restart the engine), `watch_meters` (`ipc::Channel`, 30 Hz).
+2. ✅ Settings: JSON in `%APPDATA%\com.viumic.desktop\settings.json` (confirmed written).
+3. ✅ Tray: "Noise removal" check item, Open, Quit; left click opens; closing the window hides it.
+4. ✅ Single instance; Start with Windows (autostart plugin, launches with `--hidden` into the tray).
+5. ✅ Notes when VB-CABLE is missing, and when it's the Windows default **output** (the user hears nothing). A cable *default input* is fine: the app's "Automatic" mic skips it and picks the first real mic.
+6. ✅ Background supervisor: starts the engine and restarts it every 2 s after an "audio device" error (unplugged mic).
+7. ✅ Engine: output peak limiter (−1 dBFS ceiling; the user's output had hit 0 dBFS). Adaptive jitter buffer (20 ms, growing 5 ms per underrun up to 50 ms) after the release soak showed 4 underruns in 10 min with VB-CABLE. Re-soak to confirm.
+8. Design: logo palette with meaning (lavender = raw mic, mint = clean voice). The one bold element is the live strip (raw level behind clean level; the gap is the removed noise). Everything else is quiet controls, with rare settings under "More settings".
 
 ```
 ┌ ViuMic ─────────────────────────────── ● ON ┐
