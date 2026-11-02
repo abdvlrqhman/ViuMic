@@ -1,0 +1,14 @@
+[package]
+name = "viumic-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "viumic"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+viumic-engine.workspace = true
+hound = "3"
