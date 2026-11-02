@@ -3,3 +3,8 @@
 *.wav binary
 *.png binary
 *.ico binary
+*.exe binary
+*.sys binary
+*.cat binary
+# Third-party packages ship byte-for-byte (driver .inf files are covered by signed .cat catalogs).
+vendor/** -text

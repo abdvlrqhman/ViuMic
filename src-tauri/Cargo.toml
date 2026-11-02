@@ -21,3 +21,21 @@ tauri = { version = "2.12.5", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Already in the tree via cpal; used to give the virtual cable ViuMic names.
+windows = { version = "0.62", features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Media_Audio",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_Threading",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+# The COM `#[interface]` macro expands to `windows_core` paths.
+windows-core = "0.62"
+
+# Task Manager / Explorer show "ViuMic.exe" (the version info already says ViuMic).
+[[bin]]
+name = "ViuMic"
+path = "src/main.rs"

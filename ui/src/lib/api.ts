@@ -8,12 +8,10 @@ export const ALL_NOISE_DB = 100
 export type Quality = 'best' | 'light'
 
 export interface Settings {
-  /** Microphone name; null = automatic (Windows default, skipping VB-CABLE). */
+  /** The chosen microphone; ViuMic always uses it and waits for it when unplugged. */
   input: string | null
   enabled: boolean
   strengthDb: number
-  /** Deeper voice, in semitones; 0 = off. */
-  depth: number
   quality: Quality
   /** Mains hum to remove (50 or 60 Hz); null = off. */
   humHz: number | null
@@ -21,12 +19,13 @@ export interface Settings {
 
 export interface View {
   settings: Settings
+  /** Connected microphones, without the virtual cable. */
   mics: string[]
-  /** The mic in use right now. */
-  mic: string | null
   error: string | null
   cableMissing: boolean
   cableIsSpeaker: boolean
+  /** What apps call ViuMic's clean mic, e.g. "ViuMic Microphone". */
+  appMic: string | null
 }
 
 export interface Meters {
@@ -34,8 +33,8 @@ export interface Meters {
   inPeak: number
   outPeak: number
   latencyMs: number
-  /** Worst DSP time per 10 ms step, as a fraction of the budget. */
-  load: number
+  /** ViuMic's share of the whole processor, in percent, as Task Manager counts it. */
+  cpuPercent: number
 }
 
 export const getState = () => invoke<View>('get_state')

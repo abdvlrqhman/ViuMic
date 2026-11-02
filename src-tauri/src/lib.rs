@@ -1,6 +1,9 @@
 //! ViuMic desktop app: one window and a tray icon over the engine. The engine keeps running
 //! while the window is hidden; closing the window hides it, and Quit (tray) exits.
 
+#[cfg(windows)]
+mod cable;
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -30,13 +33,12 @@ enum Quality {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct Settings {
-    /// Microphone name; `None` = the Windows default (skipping VB-CABLE's own output).
+    /// The chosen microphone. Picked once on the first run (never VB-CABLE's own output),
+    /// then always this one: if it's unplugged, ViuMic waits for it instead of switching.
     input: Option<String>,
     enabled: bool,
     /// Maximum noise attenuation in dB; at or above [`UNLIMITED_DB`] it removes all it can.
     strength_db: f32,
-    /// Deeper voice, in semitones (0 = off).
-    depth: f32,
     quality: Quality,
     /// Mains hum to remove (50 or 60 Hz), `None` = off.
     hum_hz: Option<f32>,
@@ -48,7 +50,6 @@ impl Default for Settings {
             input: None,
             enabled: true,
             strength_db: UNLIMITED_DB,
-            depth: 0.0,
             quality: Quality::Best,
             hum_hz: Some(50.0),
         }
@@ -67,13 +68,14 @@ impl Settings {
 #[serde(rename_all = "camelCase")]
 struct View {
     settings: Settings,
+    /// Connected microphones, without VB-CABLE's own output.
     mics: Vec<String>,
-    /// The mic in use right now.
-    mic: Option<String>,
     error: Option<String>,
     cable_missing: bool,
     /// Windows plays all sound into the cable, so the user hears nothing.
     cable_is_speaker: bool,
+    /// What apps call the clean mic ("ViuMic Microphone" once renamed).
+    app_mic: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -82,7 +84,70 @@ struct Meters {
     in_peak: f32,
     out_peak: f32,
     latency_ms: f32,
-    load: f32,
+    /// ViuMic's share of the whole processor, in percent, as Task Manager counts it.
+    cpu_percent: f32,
+}
+
+/// Process CPU usage the way Task Manager reports it: CPU time used since the last sample,
+/// divided by the wall time and the number of logical processors.
+struct CpuMeter {
+    last_cpu: Duration,
+    last_wall: Instant,
+    percent: f32,
+}
+
+impl CpuMeter {
+    /// Re-sample at most this often: Windows counts CPU time in ~15.6 ms ticks.
+    const EVERY: Duration = Duration::from_millis(500);
+
+    fn new() -> Self {
+        Self {
+            last_cpu: process_cpu_time(),
+            last_wall: Instant::now(),
+            percent: 0.0,
+        }
+    }
+
+    fn percent(&mut self) -> f32 {
+        let wall = self.last_wall.elapsed();
+        if wall >= Self::EVERY {
+            let cpu = process_cpu_time();
+            let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as f32;
+            let used = cpu.saturating_sub(self.last_cpu).as_secs_f32();
+            self.percent = 100.0 * used / (wall.as_secs_f32() * cores);
+            self.last_cpu = cpu;
+            self.last_wall = Instant::now();
+        }
+        self.percent
+    }
+}
+
+/// Kernel + user time this process has used so far.
+#[cfg(windows)]
+fn process_cpu_time() -> Duration {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let (mut created, mut exited, mut kernel, mut user) = Default::default();
+    let ticks = |t: FILETIME| (t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64;
+    // SAFETY: plain out-parameters for the current process's pseudo-handle.
+    let ok = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    match ok {
+        Ok(()) => Duration::from_nanos((ticks(kernel) + ticks(user)) * 100),
+        Err(_) => Duration::ZERO,
+    }
+}
+
+#[cfg(not(windows))]
+fn process_cpu_time() -> Duration {
+    Duration::ZERO
 }
 
 struct App {
@@ -101,12 +166,16 @@ impl App {
             settings: self.settings.clone(),
             cable_missing: !d.has_cable(),
             cable_is_speaker: d.default_output.is_some_and(|n| n.contains(CABLE)),
+            app_mic: d
+                .inputs
+                .iter()
+                .find(|n| n.contains(CABLE))
+                .map(|n| n.split(" (").next().unwrap_or(n).to_string()),
             mics: d
                 .inputs
                 .into_iter()
                 .filter(|n| !n.contains(CABLE))
                 .collect(),
-            mic: self.engine.as_ref().map(|e| e.input_name.clone()),
             error: self.error.clone(),
         }
     }
@@ -114,21 +183,27 @@ impl App {
     fn start(&mut self) {
         self.engine = None; // release the devices before reopening them
         self.last_start = Some(Instant::now());
-        let s = &self.settings;
-        let mut input = s.input.clone();
-        if input.is_none() {
-            // Installing VB-CABLE makes its output the default mic, which would feed ViuMic its
-            // own output. Fall back to the first real mic.
-            let d = engine::list_devices().unwrap_or_default();
-            if d.default_input
-                .as_deref()
-                .is_some_and(|n| n.contains(CABLE))
-            {
-                input = d.inputs.into_iter().find(|n| !n.contains(CABLE));
-            }
+        // Best effort: an unrenamed cable still works, it's just called "CABLE Output".
+        #[cfg(windows)]
+        let _ = cable::brand();
+        let devices = engine::list_devices().unwrap_or_default();
+        let Some(mic) = self.settings.input.clone().or_else(|| first_pick(&devices)) else {
+            self.error = Some("No microphone found. Plug one in".into());
+            return;
+        };
+        if self.settings.input.is_none() {
+            self.settings.input = Some(mic.clone());
+            self.save();
         }
+        if !devices.inputs.contains(&mic) {
+            self.error = Some(format!(
+                "“{mic}” isn't connected. ViuMic switches back to it as soon as it's plugged in"
+            ));
+            return;
+        }
+        let s = &self.settings;
         let config = Config {
-            input,
+            input: Some(mic),
             output: None,
             model: match s.quality {
                 Quality::Best => Model::DpdfNet,
@@ -136,7 +211,6 @@ impl App {
             },
             strength_db: s.strength_db,
             enabled: s.enabled,
-            depth: s.depth,
             hum_hz: s.hum_hz,
         };
         match Engine::start(&config) {
@@ -156,10 +230,13 @@ impl App {
         } else if let Some(e) = &self.engine {
             e.set_enabled(self.settings.enabled);
             e.set_strength(self.settings.strength_db);
-            e.set_depth(self.settings.depth);
         }
-        // ponytail: a failed save is silent (settings stay applied for this run); surface it
-        // if users report settings not sticking.
+        self.save();
+    }
+
+    // ponytail: a failed save is silent (settings stay applied for this run); surface it if
+    // users report settings not sticking.
+    fn save(&self) {
         if let Some(dir) = self.settings_path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -167,6 +244,15 @@ impl App {
             let _ = std::fs::write(&self.settings_path, json);
         }
     }
+}
+
+/// First-run pick: the Windows default mic, unless that's VB-CABLE's own output (installing
+/// the cable makes it the default), else the first real mic.
+fn first_pick(d: &engine::Devices) -> Option<String> {
+    d.default_input
+        .clone()
+        .filter(|n| !n.contains(CABLE))
+        .or_else(|| d.inputs.iter().find(|n| !n.contains(CABLE)).cloned())
 }
 
 fn lock<'a>(app: &'a State<'_, Mutex<App>>) -> MutexGuard<'a, App> {
@@ -196,6 +282,7 @@ fn watch_meters(app: State<'_, Mutex<App>>, channel: Channel<Meters>) {
 
 /// Background loop: starts the engine, restarts it after device errors, and feeds the meters.
 fn supervise(handle: AppHandle) {
+    let mut cpu = CpuMeter::new();
     loop {
         std::thread::sleep(TICK);
         let state = handle.state::<Mutex<App>>();
@@ -219,7 +306,7 @@ fn supervise(handle: AppHandle) {
                 in_peak: s.in_peak,
                 out_peak: s.out_peak,
                 latency_ms: s.latency_ms,
-                load: s.load,
+                cpu_percent: cpu.percent(),
             };
             if channel.send(meters).is_err() {
                 a.meters = None; // window reloaded or closed; it subscribes again

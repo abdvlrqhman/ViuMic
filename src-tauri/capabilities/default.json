@@ -2,15 +2,29 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "What the ViuMic window may do",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize",
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://vb-audio.com/*" }, { "url": "ms-settings:*" }]
+      "allow": [
+        {
+          "url": "https://vb-audio.com/*"
+        },
+        {
+          "url": "ms-settings:*"
+        }
+      ]
     }
   ]
 }

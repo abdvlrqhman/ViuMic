@@ -1,5 +1,4 @@
 import { mount } from 'svelte'
-import '@fontsource-variable/saira/wdth.css'
 import './app.css'
 import App from './App.svelte'
 

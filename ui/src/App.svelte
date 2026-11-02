@@ -1,9 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { Tween } from 'svelte/motion'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
-  import logo from '../../assets/logo.svg'
-  import Strip from './lib/Strip.svelte'
+  import Cpu from '@lucide/svelte/icons/cpu'
+  import Mic from '@lucide/svelte/icons/mic'
+  import Timer from '@lucide/svelte/icons/timer'
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
+  import * as Alert from '$lib/components/ui/alert/index.js'
+  import { Badge } from '$lib/components/ui/badge/index.js'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import * as Card from '$lib/components/ui/card/index.js'
+  import { Label } from '$lib/components/ui/label/index.js'
+  import * as RadioGroup from '$lib/components/ui/radio-group/index.js'
+  import * as Select from '$lib/components/ui/select/index.js'
+  import { Slider } from '$lib/components/ui/slider/index.js'
+  import { Switch } from '$lib/components/ui/switch/index.js'
+  import Strip from '$lib/Strip.svelte'
+  import TitleBar from '$lib/TitleBar.svelte'
   import {
     ALL_NOISE_DB,
     getState,
@@ -11,33 +25,57 @@
     setSettings,
     watchMeters,
     type Meters,
+    type Quality,
     type Settings,
     type View,
-  } from './lib/api'
+  } from '$lib/api'
 
-  /** Strength slider: 6..48 dB of reduction in steps of 3, then one last stop meaning "all". */
+  /** Strength slider: 6..48 dB of reduction in steps of 3, then a last stop meaning "maximum". */
   const STRENGTH_MIN = 6
-  const STRENGTH_ALL = 51
-  const DEPTH_MAX = 6
+  const STRENGTH_MAX = 51
   const VB_CABLE_URL = 'https://vb-audio.com/Cable/'
+  const HUM = [
+    { value: '50', label: '50 Hz (most of the world)' },
+    { value: '60', label: '60 Hz (the Americas)' },
+    { value: 'off', label: 'Off' },
+  ]
 
   let view = $state<View>()
-  let meters = $state<Meters>({ inPeak: 0, outPeak: 0, latencyMs: 0, load: 0 })
+  // Delay and CPU: median of the last ~3 s (90 updates), refreshed twice a second and
+  // eased, so the numbers read steady instead of flickering every 33 ms.
+  const STATS_WINDOW = 90
+  const latencyHistory: number[] = []
+  const cpuHistory: number[] = []
+  const delayMs = new Tween(0, { duration: 400 })
+  const cpuPercent = new Tween(0, { duration: 400 })
+  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1] ?? 0
+  const cpuText = (p: number) => (p < 10 ? `${p.toFixed(1)}%` : `${Math.round(p)}%`)
+  const remember = (xs: number[], x: number) => {
+    xs.push(x)
+    if (xs.length > STATS_WINDOW) xs.shift()
+  }
+  let meters = $state<Meters>({ inPeak: 0, outPeak: 0, latencyMs: 0, cpuPercent: 0 })
   let startWithWindows = $state(false)
-  // Slider positions follow the saved settings, but move freely while dragging.
-  let strength = $state(STRENGTH_ALL)
-  let depth = $state(0)
+  // Follows the saved setting, but moves freely while dragging.
+  let strength = $state(STRENGTH_MAX)
 
   $effect(() => {
-    if (!view) return
-    strength = view.settings.strengthDb >= ALL_NOISE_DB ? STRENGTH_ALL : view.settings.strengthDb
-    depth = view.settings.depth
+    if (view)
+      strength = view.settings.strengthDb >= ALL_NOISE_DB ? STRENGTH_MAX : view.settings.strengthDb
   })
 
   onMount(() => {
     const refresh = () => getState().then((v) => (view = v))
     refresh()
-    watchMeters((m) => (meters = m))
+    watchMeters((m) => {
+      meters = m
+      remember(latencyHistory, m.latencyMs)
+      remember(cpuHistory, m.cpuPercent)
+    })
+    const stats = setInterval(() => {
+      delayMs.target = median(latencyHistory)
+      cpuPercent.target = median(cpuHistory)
+    }, 500)
     isEnabled()
       .then((on) => (startWithWindows = on))
       .catch(() => {})
@@ -47,6 +85,7 @@
     return () => {
       unlisten.then((off) => off())
       window.removeEventListener('focus', refresh)
+      clearInterval(stats)
     }
   })
 
@@ -54,359 +93,212 @@
     if (view) view = await setSettings({ ...view.settings, ...patch })
   }
 
-  async function toggleStartWithWindows() {
-    await (startWithWindows ? disable() : enable())
+  async function setStartWithWindows(on: boolean) {
+    await (on ? enable() : disable())
     startWithWindows = await isEnabled()
   }
 
-  const fill = (v: number, min: number, max: number) => `${((v - min) / (max - min)) * 100}%`
-  const strengthText = $derived(strength >= STRENGTH_ALL ? 'All of it' : `${strength} dB less`)
-  const depthText = $derived(depth === 0 ? 'Off' : `${depth} semitones lower`)
   const on = $derived(view?.settings.enabled ?? true)
+  const mic = $derived(view?.settings.input ?? null)
+  const micConnected = $derived(!!mic && !!view?.mics.includes(mic))
+  const micOptions = $derived(view ? (mic && !micConnected ? [mic, ...view.mics] : view.mics) : [])
+  const appMic = $derived(view?.appMic ?? 'ViuMic Microphone')
+  const status = $derived(
+    view?.error ? 'Needs attention' : on ? 'Cleaning' : 'Off',
+  )
 </script>
 
-<main>
-  <header>
-    <img src={logo} alt="" width="30" height="30" />
-    <h1>ViuMic</h1>
-    <button
-      class="switch"
-      role="switch"
-      aria-checked={on}
-      disabled={!view}
-      onclick={() => update({ enabled: !on })}
-    >
-      Noise removal
-      <span class="track" aria-hidden="true"><span class="knob"></span></span>
-    </button>
-  </header>
+<div class="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+  <TitleBar />
 
-  <Strip {meters} enabled={on} />
-  <p class="hint">
-    In Discord, Zoom or OBS, choose <strong>CABLE Output</strong> as your microphone.
-  </p>
+  <main class="flex-1 overflow-y-auto">
+    <div class="mx-auto grid max-w-3xl gap-4 p-4 sm:grid-cols-2 sm:p-6">
+      {#if view?.cableMissing}
+        <Alert.Root variant="destructive" class="sm:col-span-2">
+          <TriangleAlert />
+          <Alert.Title>The ViuMic microphone isn't installed</Alert.Title>
+          <Alert.Description>
+            Reinstall ViuMic to add it, or install VB-CABLE yourself and restart your PC.
+            <Button variant="link" class="h-auto p-0" onclick={() => openUrl(VB_CABLE_URL)}>
+              Get VB-CABLE
+            </Button>
+          </Alert.Description>
+        </Alert.Root>
+      {:else if view?.cableIsSpeaker}
+        <Alert.Root class="sm:col-span-2">
+          <TriangleAlert />
+          <Alert.Title>You can't hear anything right now</Alert.Title>
+          <Alert.Description>
+            Windows is sending your sound into ViuMic. Choose your speakers or headphones as the
+            output.
+            <Button variant="link" class="h-auto p-0" onclick={() => openUrl('ms-settings:sound')}>
+              Open sound settings
+            </Button>
+          </Alert.Description>
+        </Alert.Root>
+      {/if}
+      {#if view?.error && !view.cableMissing}
+        <Alert.Root variant="destructive" class="sm:col-span-2">
+          <TriangleAlert />
+          <Alert.Title>Your voice isn't reaching apps</Alert.Title>
+          <Alert.Description>{view.error}.</Alert.Description>
+        </Alert.Root>
+      {/if}
 
-  {#if view}
-    {#if view.cableMissing}
-      <div class="note" role="status">
-        <p>
-          ViuMic sends your clean voice to VB-CABLE, a free virtual microphone. Install it, then
-          restart your PC.
-        </p>
-        <button onclick={() => openUrl(VB_CABLE_URL)}>Get VB-CABLE</button>
-      </div>
-    {:else if view.cableIsSpeaker}
-      <div class="note" role="status">
-        <p>
-          Windows is playing all sound into VB-CABLE, so you can't hear anything. Choose your
-          speakers or headphones as the output.
-        </p>
-        <button onclick={() => openUrl('ms-settings:sound')}>Open sound settings</button>
-      </div>
-    {/if}
-    {#if view.error && !view.cableMissing}
-      <div class="note" role="alert">
-        <p>{view.error}. ViuMic tries again every 2 seconds.</p>
-      </div>
-    {/if}
+      <Card.Root class="sm:col-span-2">
+        <Card.Header>
+          <Card.Title class="flex items-center gap-2">
+            Noise removal
+            <Badge variant={view?.error ? 'destructive' : on ? 'default' : 'secondary'}>{status}</Badge>
+          </Card.Title>
+          <Card.Description>
+            {on ? 'Apps hear your voice without the background.' : 'Apps hear your mic as it is.'}
+          </Card.Description>
+          <Card.Action>
+            <Switch
+              checked={on}
+              disabled={!view}
+              aria-label="Noise removal"
+              class="data-checked:bg-chart-2"
+              onCheckedChange={(checked) => update({ enabled: checked })}
+            />
+          </Card.Action>
+        </Card.Header>
+        <Card.Content class="space-y-2">
+          <Strip {meters} enabled={on} />
+          <div class="flex items-center gap-4 text-xs text-muted-foreground">
+            <span class="flex items-center gap-1.5">
+              <span class="size-2 rounded-full bg-muted-foreground/50"></span>Your mic
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="size-2 rounded-full bg-chart-2"></span>What apps hear
+            </span>
+          </div>
+        </Card.Content>
+        <Card.Footer class="gap-4 text-xs text-muted-foreground tabular-nums">
+          <span class="flex items-center gap-1.5"><Timer class="size-3.5" />{Math.round(delayMs.current)} ms delay</span>
+          <span class="flex items-center gap-1.5" title="ViuMic's share of your whole processor, like Task Manager shows it">
+            <Cpu class="size-3.5" />{cpuText(cpuPercent.current)} CPU
+          </span>
+        </Card.Footer>
+      </Card.Root>
 
-    <label class="field">
-      <span>Microphone</span>
-      <select
-        value={view.settings.input ?? ''}
-        onchange={(e) => update({ input: e.currentTarget.value || null })}
-      >
-        <option value="">
-          Automatic{view.mic && !view.settings.input ? ` (${view.mic})` : ''}
-        </option>
-        {#if view.settings.input && !view.mics.includes(view.settings.input)}
-          <option value={view.settings.input}>{view.settings.input} (not connected)</option>
-        {/if}
-        {#each view.mics as mic (mic)}
-          <option value={mic}>{mic}</option>
-        {/each}
-      </select>
-    </label>
+      <Card.Root>
+        <Card.Header>
+          <Card.Title>Microphone</Card.Title>
+          <Card.Description>ViuMic always uses this mic, and waits for it if it's unplugged.</Card.Description>
+        </Card.Header>
+        <Card.Content>
+          <Select.Root type="single" value={mic ?? undefined} onValueChange={(v) => update({ input: v })}>
+            <Select.Trigger class="w-full" aria-label="Microphone">
+              <span class="flex min-w-0 flex-1 items-center gap-2 text-left">
+                <Mic class="shrink-0 text-muted-foreground" />
+                <span class="truncate">
+                  {mic ?? 'Choose a microphone'}{mic && !micConnected ? ' (not connected)' : ''}
+                </span>
+              </span>
+            </Select.Trigger>
+            <Select.Content>
+              {#each micOptions as name (name)}
+                <Select.Item value={name} label={name}>
+                  {name}{name === mic && !micConnected ? ' (not connected)' : ''}
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </Card.Content>
+      </Card.Root>
 
-    <label class="field">
-      <span class="row"><span>Noise to remove</span><output>{strengthText}</output></span>
-      <input
-        type="range"
-        min={STRENGTH_MIN}
-        max={STRENGTH_ALL}
-        step="3"
-        disabled={!on}
-        bind:value={strength}
-        style:--fill={fill(strength, STRENGTH_MIN, STRENGTH_ALL)}
-        onchange={() => update({ strengthDb: strength >= STRENGTH_ALL ? ALL_NOISE_DB : strength })}
-      />
-    </label>
-
-    <label class="field">
-      <span class="row"><span>Deeper voice</span><output>{depthText}</output></span>
-      <input
-        type="range"
-        min="0"
-        max={DEPTH_MAX}
-        step="0.5"
-        bind:value={depth}
-        style:--fill={fill(depth, 0, DEPTH_MAX)}
-        onchange={() => update({ depth })}
-      />
-    </label>
-
-    <details>
-      <summary>More settings</summary>
-      <fieldset>
-        <legend>Quality</legend>
-        <label class="choice">
-          <input
-            type="radio"
-            name="quality"
-            checked={view.settings.quality === 'best'}
-            onchange={() => update({ quality: 'best' })}
+      <Card.Root>
+        <Card.Header>
+          <Card.Title>Strength</Card.Title>
+          <Card.Description>How much background noise to remove.</Card.Description>
+          <Card.Action class="text-sm tabular-nums text-muted-foreground">
+            {strength >= STRENGTH_MAX ? 'Maximum' : `−${strength} dB`}
+          </Card.Action>
+        </Card.Header>
+        <Card.Content>
+          <Slider
+            type="single"
+            min={STRENGTH_MIN}
+            max={STRENGTH_MAX}
+            step={3}
+            disabled={!on}
+            aria-label="Strength"
+            bind:value={strength}
+            onValueCommit={(v) => update({ strengthDb: v >= STRENGTH_MAX ? ALL_NOISE_DB : v })}
           />
-          Best
-        </label>
-        <label class="choice">
-          <input
-            type="radio"
-            name="quality"
-            checked={view.settings.quality === 'light'}
-            onchange={() => update({ quality: 'light' })}
-          />
-          Light, for older PCs
-        </label>
-      </fieldset>
-      <label class="field">
-        <span>Remove electrical hum</span>
-        <select
-          value={String(view.settings.humHz ?? 'off')}
-          onchange={(e) => {
-            const v = e.currentTarget.value
-            update({ humHz: v === 'off' ? null : Number(v) })
-          }}
-        >
-          <option value="50">50 Hz (most of the world)</option>
-          <option value="60">60 Hz (the Americas)</option>
-          <option value="off">Off</option>
-        </select>
-      </label>
-      <label class="choice">
-        <input type="checkbox" checked={startWithWindows} onchange={toggleStartWithWindows} />
-        Start with Windows
-      </label>
-    </details>
-  {/if}
+        </Card.Content>
+      </Card.Root>
 
-  <footer>
-    <span>{Math.round(meters.latencyMs)} ms delay</span>
-    <span title="Worst-case time to clean each 10 ms of audio, on one core">
-      {Math.round(meters.load * 100)}% CPU
-    </span>
-  </footer>
-</main>
+      <Card.Root>
+        <Card.Header>
+          <Card.Title>Use it in your apps</Card.Title>
+          <Card.Description>
+            In Discord, Zoom, OBS or any app, choose <span class="font-medium text-foreground">{appMic}</span> as
+            your microphone, and turn off the app's own noise suppression.
+          </Card.Description>
+        </Card.Header>
+        <Card.Footer class="text-xs text-muted-foreground">
+          <p>
+            The ViuMic microphone is VB-CABLE by VB-Audio, a donationware driver.
+            <Button variant="link" class="h-auto p-0 text-xs" onclick={() => openUrl(VB_CABLE_URL)}>
+              Support VB-Audio
+            </Button>
+          </p>
+        </Card.Footer>
+      </Card.Root>
 
-<style>
-  main {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    max-width: 520px;
-    min-height: 100vh;
-    margin: 0 auto;
-    padding: 18px 20px 14px;
-  }
-
-  header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  h1 {
-    margin: 0;
-    font-size: var(--step-2);
-    font-weight: 650;
-    font-stretch: 125%;
-    letter-spacing: 0.01em;
-  }
-
-  .switch {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 4px 6px 10px;
-    border: 0;
-    border-radius: 999px;
-    background: none;
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-  .switch[aria-checked='true'] {
-    color: var(--text);
-  }
-  .track {
-    width: 42px;
-    height: 24px;
-    padding: 3px;
-    border-radius: 999px;
-    background: var(--line);
-    transition: background 150ms;
-  }
-  .knob {
-    display: block;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--text-dim);
-    transition:
-      transform 150ms,
-      background 150ms;
-  }
-  .switch[aria-checked='true'] .track {
-    background: var(--clean-deep);
-  }
-  .switch[aria-checked='true'] .knob {
-    transform: translateX(18px);
-    background: var(--text);
-  }
-
-  .hint {
-    margin: -8px 0 0;
-    font-size: var(--step--1);
-    color: var(--text-dim);
-  }
-  .hint strong {
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .note {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 12px 14px;
-    border: 1px solid rgb(255 197 107 / 0.35);
-    border-radius: 10px;
-    background: rgb(255 197 107 / 0.07);
-  }
-  .note p {
-    margin: 0;
-    max-width: 60ch;
-  }
-  .note button {
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--warn);
-    font-weight: 600;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    cursor: pointer;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .row {
-    display: flex;
-    justify-content: space-between;
-  }
-  output {
-    color: var(--text-dim);
-  }
-
-  select {
-    appearance: none;
-    width: 100%;
-    padding: 9px 36px 9px 12px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--surface)
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%239aa1d4' stroke-width='1.6'/%3E%3C/svg%3E")
-      no-repeat right 14px center;
-    text-overflow: ellipsis;
-    cursor: pointer;
-  }
-  option {
-    background: var(--surface);
-  }
-
-  input[type='range'] {
-    appearance: none;
-    width: 100%;
-    height: 20px;
-    margin: 0;
-    background: none;
-    cursor: pointer;
-  }
-  input[type='range']::-webkit-slider-runnable-track {
-    height: 4px;
-    border-radius: 2px;
-    background: linear-gradient(to right, var(--clean) var(--fill), var(--line) var(--fill));
-  }
-  input[type='range']::-webkit-slider-thumb {
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    margin-top: -6px;
-    border-radius: 50%;
-    background: var(--text);
-  }
-  input[type='range']:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  details {
-    border-top: 1px solid var(--line);
-    padding-top: 12px;
-  }
-  summary {
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-  details[open] summary {
-    margin-bottom: 14px;
-  }
-  details[open] {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-  fieldset {
-    display: flex;
-    gap: 18px;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-  legend {
-    float: left;
-    width: 100%;
-    margin-bottom: 8px;
-  }
-  .choice {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-  }
-  input[type='radio'],
-  input[type='checkbox'] {
-    accent-color: var(--clean-deep);
-    margin: 0;
-  }
-
-  footer {
-    display: flex;
-    gap: 18px;
-    margin-top: auto;
-    font-size: var(--step--1);
-    color: var(--text-dim);
-  }
-</style>
+      <Card.Root>
+        <Card.Header>
+          <Card.Title>Preferences</Card.Title>
+        </Card.Header>
+        <Card.Content class="space-y-5">
+          <div class="space-y-2">
+            <Label>Quality</Label>
+            <RadioGroup.Root
+              value={view?.settings.quality ?? 'best'}
+              onValueChange={(v) => update({ quality: v as Quality })}
+              class="flex gap-6"
+            >
+              <div class="flex items-center gap-2">
+                <RadioGroup.Item value="best" id="quality-best" />
+                <Label for="quality-best" class="font-normal">Best</Label>
+              </div>
+              <div class="flex items-center gap-2">
+                <RadioGroup.Item value="light" id="quality-light" />
+                <Label for="quality-light" class="font-normal">Light, for older PCs</Label>
+              </div>
+            </RadioGroup.Root>
+          </div>
+          <div class="space-y-2">
+            <Label>Remove electrical hum</Label>
+            <Select.Root
+              type="single"
+              value={String(view?.settings.humHz ?? 'off')}
+              onValueChange={(v) => update({ humHz: v === 'off' ? null : Number(v) })}
+            >
+              <Select.Trigger class="w-full" aria-label="Remove electrical hum">
+                <span class="flex-1 truncate text-left">
+                  {HUM.find((h) => h.value === String(view?.settings.humHz ?? 'off'))?.label}
+                </span>
+              </Select.Trigger>
+              <Select.Content>
+                {#each HUM as h (h.value)}
+                  <Select.Item value={h.value} label={h.label}>{h.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          <div class="flex items-center justify-between gap-4">
+            <Label for="autostart" class="flex-col items-start gap-1">
+              Start with Windows
+              <span class="font-normal text-muted-foreground">Opens quietly in the tray.</span>
+            </Label>
+            <Switch id="autostart" checked={startWithWindows} onCheckedChange={setStartWithWindows} />
+          </div>
+        </Card.Content>
+      </Card.Root>
+    </div>
+  </main>
+</div>

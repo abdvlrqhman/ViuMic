@@ -14,12 +14,14 @@
       {
         "label": "main",
         "title": "ViuMic",
-        "width": 420,
-        "height": 640,
-        "minWidth": 360,
-        "minHeight": 520,
+        "width": 480,
+        "height": 760,
+        "minWidth": 380,
+        "minHeight": 560,
         "center": true,
-        "visible": false
+        "visible": false,
+        "decorations": false,
+        "shadow": true
       }
     ],
     "security": {
@@ -28,13 +30,26 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "ViuMic",
+    "resources": {
+      "../vendor/vbcable/*": "vbcable/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "installer-hooks.nsh"
+      }
+    },
+    "copyright": "ViuMic contributors. Virtual microphone: VB-CABLE by VB-Audio (www.vb-cable.com)."
   }
 }

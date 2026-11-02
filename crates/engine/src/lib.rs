@@ -9,10 +9,8 @@
 mod denoise;
 mod dpdfnet;
 mod dynamics;
-mod voice;
 
 pub use denoise::{Denoiser, HOP, Model, SAMPLE_RATE, UNLIMITED_DB};
-pub use voice::{Deepen, MAX_DEPTH};
 
 use anyhow::{Context, Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -23,6 +21,12 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// VB-CABLE's playback endpoint. Audio written here comes out of the "CABLE Output" mic.
+/// VB-CABLE's device description; stays the same when the endpoints are renamed.
+pub const CABLE_DEVICE: &str = "VB-Audio Virtual Cable";
+/// Names ViuMic gives the cable's two endpoints (see the app's installer).
+pub const VIUMIC_MIC: &str = "ViuMic Microphone";
+pub const VIUMIC_FEED: &str = "ViuMic Feed";
+/// VB-CABLE's own name for its playback endpoint, before renaming.
 pub const CABLE_INPUT: &str = "CABLE Input";
 pub const CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
@@ -48,8 +52,6 @@ pub struct Config {
     pub strength_db: f32,
     /// Noise removal on/off.
     pub enabled: bool,
-    /// Deeper voice: semitones to lower the pitch, 0 = off.
-    pub depth: f32,
     /// Mains hum to remove: 50 Hz (most of the world) or 60 Hz (the Americas), `None` = off.
     pub hum_hz: Option<f32>,
 }
@@ -62,7 +64,6 @@ impl Default for Config {
             model: Model::default(),
             strength_db: UNLIMITED_DB,
             enabled: true,
-            depth: 0.0,
             hum_hz: Some(50.0),
         }
     }
@@ -96,7 +97,7 @@ pub struct Devices {
 
 impl Devices {
     pub fn has_cable(&self) -> bool {
-        self.outputs.iter().any(|n| n.contains(CABLE_INPUT))
+        self.outputs.iter().any(|n| n.contains(CABLE_DEVICE))
     }
 }
 
@@ -136,7 +137,6 @@ struct Shared {
     running: AtomicBool,
     enabled: AtomicBool,
     strength_db: AtomicF32,
-    depth: AtomicF32,
     in_peak: AtomicF32,
     out_peak: AtomicF32,
     capture_us: AtomicU32,
@@ -162,8 +162,8 @@ impl Shared {
 
 pub struct Engine {
     shared: Arc<Shared>,
-    /// Model and deep-voice delays, in samples.
-    delays: (usize, usize),
+    /// Model delay, in samples.
+    delay: usize,
     pub input_name: String,
     pub output_name: String,
     dsp: Option<JoinHandle<()>>,
@@ -178,12 +178,14 @@ impl Engine {
         let output = match &cfg.output {
             Some(q) => find(host.output_devices()?, q)
                 .with_context(|| format!("output \"{q}\" not found"))?,
-            None => find(host.output_devices()?, CABLE_INPUT)
+            // "ViuMic Feed (": the bracket keeps "ViuMic Spare 16ch" and the like out.
+            None => find(host.output_devices()?, &format!("{VIUMIC_FEED} ("))
+                .or_else(|| find(host.output_devices().ok()?, CABLE_INPUT))
                 .with_context(|| format!("VB-CABLE not found. Install it from {CABLE_URL}"))?,
         };
         let input_name = name(&input).unwrap_or_default();
         let output_name = name(&output).unwrap_or_default();
-        if input_name.contains("CABLE Output") && output_name.contains(CABLE_INPUT) {
+        if input_name.contains(CABLE_DEVICE) && output_name.contains(CABLE_DEVICE) {
             bail!("\"{input_name}\" is ViuMic's own output; pick your real microphone");
         }
 
@@ -215,7 +217,6 @@ impl Engine {
         shared.running.store(true, Relaxed);
         shared.enabled.store(cfg.enabled, Relaxed);
         shared.strength_db.set(cfg.strength_db);
-        shared.depth.set(cfg.depth);
         shared.prime.store(PRIME_START as u32, Relaxed);
 
         let (mut mic_tx, mic_rx) = RingBuffer::<f32>::new(SAMPLE_RATE as usize);
@@ -282,21 +283,20 @@ impl Engine {
             .name("viumic-dsp".into())
             .spawn(move || match Denoiser::new(model, strength, hum) {
                 Ok(mut den) => {
-                    let mut deep = Deepen::default();
-                    let _ = ready_tx.send(Ok((den.delay(), deep.delay())));
-                    dsp_loop(&sh, &mut den, &mut deep, mic_rx, out_tx);
+                    let _ = ready_tx.send(Ok(den.delay()));
+                    dsp_loop(&sh, &mut den, mic_rx, out_tx);
                 }
                 Err(e) => {
                     let _ = ready_tx.send(Err(e));
                 }
             })?;
-        let delays = ready_rx.recv().context("DSP thread died")??;
+        let delay = ready_rx.recv().context("DSP thread died")??;
 
         input_stream.play()?;
         output_stream.play()?;
         Ok(Self {
             shared,
-            delays,
+            delay,
             input_name,
             output_name,
             dsp: Some(dsp),
@@ -312,24 +312,14 @@ impl Engine {
         self.shared.strength_db.set(db);
     }
 
-    /// Deeper voice: semitones to lower the pitch, 0 = off.
-    pub fn set_depth(&self, semitones: f32) {
-        self.shared.depth.set(semitones);
-    }
-
     pub fn stats(&self) -> Stats {
         let s = &self.shared;
         let model = if s.enabled.load(Relaxed) {
-            self.delays.0
+            self.delay
         } else {
             0
         };
-        let deep = if s.depth.get() > 0.0 {
-            self.delays.1
-        } else {
-            0
-        };
-        let samples = s.buffered.load(Relaxed) as usize + model + deep;
+        let samples = s.buffered.load(Relaxed) as usize + model;
         let device_ms = (s.capture_us.load(Relaxed) + s.playback_us.load(Relaxed)) as f32 / 1000.0;
         Stats {
             in_peak: s.in_peak.take(),
@@ -358,15 +348,9 @@ impl Drop for Engine {
     }
 }
 
-fn dsp_loop(
-    sh: &Shared,
-    den: &mut Denoiser,
-    deep: &mut Deepen,
-    mut mic: Consumer<f32>,
-    mut out: Producer<f32>,
-) {
+fn dsp_loop(sh: &Shared, den: &mut Denoiser, mut mic: Consumer<f32>, mut out: Producer<f32>) {
     boost_thread_priority();
-    let (mut input, mut clean, mut output) = ([0.0; HOP], [0.0; HOP], [0.0; HOP]);
+    let (mut input, mut output) = ([0.0; HOP], [0.0; HOP]);
     let mut limiter = dynamics::Limiter::default();
     while sh.running.load(Relaxed) {
         let Ok(chunk) = mic.read_chunk(HOP) else {
@@ -382,14 +366,13 @@ fn dsp_loop(
         // ponytail: bypass skips the model's delay, so toggling causes one tiny jump.
         if sh.enabled.load(Relaxed) {
             den.set_strength(sh.strength_db.get());
-            if let Err(e) = den.process(&input, &mut clean) {
+            if let Err(e) = den.process(&input, &mut output) {
                 sh.fail(format!("model: {e}"));
-                clean = input;
+                output = input;
             }
         } else {
-            clean = input;
+            output = input;
         }
-        deep.process(sh.depth.get(), &clean, &mut output);
         limiter.apply(&mut output);
         sh.load
             .max(started.elapsed().as_secs_f32() / (HOP as f32 / SAMPLE_RATE as f32));

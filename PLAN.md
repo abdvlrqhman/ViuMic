@@ -19,15 +19,15 @@ Open-source AI noise cancellation for your microphone, built with Rust and Tauri
 | Denoise (light) | **RNNoise** (`nnnoiseless`) + the same filters + a downward expander | For weak CPUs. Leaves electrical noise under quiet speech and passes knocks. Adds 10 ms. |
 | Removed | DeepFilterNet3 (+ the RNNoise-with-DFN-judge hybrid, the gates) | Robotic and ~8 dB quieter on the user's mic, now superseded by DPDFNet, which builds on DFN2. That also dropped the stale `deep_filter`/tract dependency. |
 | De-hum | Notches at 50/100/150/200 Hz (4 Hz wide), `--hum 50\|60\|off`, default 50 | The user's laptop mic has a steady 49.99 Hz mains hum (+16 dB line) that RNNoise only halves. The notch removes it (−5 dB, i.e. below its neighbours); voice at 125/300/1000 Hz is untouched (test). |
-| Deeper voice (optional, off by default) | **Signalsmith Stretch** via `signalsmith-stretch` 0.1 (MIT) | Best open-source real-time pitch shifter. Pitch goes down 0–12 semitones and formants follow halfway, so it sounds deeper rather than like a monster. Adds ~40 ms. Building it needs LLVM (`winget install LLVM.LLVM`) for bindgen. |
+| Deeper voice | **Removed** (user request, 2026-11-02) | That also dropped the C++ pitch shifter and the LLVM build requirement. |
 | Inference runtime | **ONNX Runtime** via `ort` =2.0.0-rc.15 (pinned RC), CPU, 1 thread; FFT via `realfft` | Same runtime the upstream package uses. Statically linked: no DLL to ship. It downloads prebuilt ONNX Runtime at build time, so building needs network. No GPU needed. |
 | Audio I/O | `cpal` 0.18 (WASAPI) | Standard. Since 0.18 it reroutes default streams, reports xruns and doesn't panic when a device is lost. |
 | Ring buffers | `rtrb` 0.4 (lock-free single-producer/single-consumer) | Audio callbacks must never lock or allocate. |
 | Resampling | `rubato`, only when a device isn't 48 kHz | Mics can show up at 16, 44.1 or 48 kHz. The engine runs at 48 kHz mono. |
-| Virtual mic | **VB-CABLE** (free donationware), installed by the user | A driver of our own would need paid Microsoft attestation signing (EV cert). Unsigned drivers need test-signing mode, which isn't acceptable for users. ViuMic detects the cable and links to its download if it's missing. |
+| Virtual mic | **VB-CABLE bundled in the ViuMic installer**, renamed **"ViuMic Microphone"** / "ViuMic Feed" | The user wanted no separate download and an NVIDIA-Broadcast-style name. Windows only creates mics through Microsoft-signed kernel drivers (paid EV cert), so we ship VB-CABLE unmodified and run its silent setup (`-i -h`) from an NSIS post-install hook. Windows still asks once to trust the driver. ViuMic renames the endpoints at runtime through `IPolicyConfig` (what Sound settings uses; no admin needed; redone on every start). **Licensing:** the package's own readme says integrating it into another installer needs the author's agreement, while VB-Audio's licensing page allows it for free apps under the donationware model with visible credit. The app and installer show the credit; **email VB-Audio for written confirmation before a public release.** |
 | UI shell | **Tauri 2.12.x** (3.0 is alpha) | Small binary, Rust backend in the same process. |
 | Frontend | **Svelte 5 + TypeScript + Vite** (no SvelteKit) | About six controls. Svelte compiles down to almost nothing and contributors can read it. |
-| License | **MIT OR Apache-2.0** | Rust convention. Compatible with DPDFNet (Apache-2.0; releases must ship its license text), nnnoiseless (BSD-3) and Signalsmith (MIT). |
+| License | **MIT OR Apache-2.0** | Rust convention. Compatible with DPDFNet (Apache-2.0; releases must ship its license text) and nnnoiseless (BSD-3). VB-CABLE stays under VB-Audio's donationware license (see Virtual mic). |
 
 ### Rejected
 
@@ -80,7 +80,6 @@ ui/                   Svelte frontend                                       (Pha
 | ViuMic ring buffers | ~10 ms |
 | DPDFNet (1 hop of framing + 4 of model lookahead) | 50 ms |
 | RNNoise (light model) | 10 ms |
-| Deeper voice (when on) | 40 ms |
 | **Total, DPDFNet** | **90–101 ms** |
 
 The original target was ≤ 80 ms total. DPDFNet overshoots it by ~15 ms, a trade the user accepted for "perfect" quality. Calls feel natural up to ~150 ms one-way.
@@ -120,6 +119,8 @@ The original target was ≤ 80 ms total. DPDFNet overshoots it by ~15 ms, a trad
 
 ### Phase 2: Tauri app ✅ built 2026-11-02 (user testing now)
 
+**Round 2 (user feedback):** shadcn-svelte (vega, zinc, dark only, Geist) with a custom title bar (frameless window; minimize/maximize/close-to-tray) and responsive layout (1 column, 2 from 640 px). The mic choice is saved on first run and never silently switched (it waits for that mic if unplugged). Delay/CPU show the median of the last 3 s, eased. CPU is now ViuMic's share of the whole processor (Task Manager style), 1.8% on the test laptop. The exe is `ViuMic.exe` with version info "ViuMic", so Task Manager groups the model and WebView2 under ViuMic. Deeper voice removed.
+
 Root pnpm workspace (`pnpm dev` / `pnpm build`). `src-tauri` is a workspace crate; `ui` is Svelte 5 + Vite + TS (no SvelteKit), with the Saira font bundled locally.
 
 1. ✅ Commands: `get_state`, `set_settings` (save and apply live; device/model/hum restart the engine), `watch_meters` (`ipc::Channel`, 30 Hz).
@@ -149,7 +150,9 @@ Root pnpm workspace (`pnpm dev` / `pnpm build`). `src-tauri` is a workspace crat
 1. GitHub Actions on `windows-latest`: `cargo fmt --check`, `clippy -D warnings`, `cargo test`, `tauri build` (NSIS installer).
 2. Release on tag push.
 3. The installer is unsigned. The README explains the SmartScreen "More info → Run anyway" step and why: signing costs money.
-4. README (3 setup steps, plus: turn off Discord/Zoom's own noise suppression), LICENSE-MIT, LICENSE-APACHE, and third-party notices (DPDFNet Apache-2.0 text, since the model is embedded in the binary; nnnoiseless BSD-3; Signalsmith MIT; ONNX Runtime MIT).
+4. LICENSE-MIT, LICENSE-APACHE, and third-party notices (DPDFNet Apache-2.0 text, since the model is embedded in the binary; nnnoiseless BSD-3; ONNX Runtime MIT; VB-CABLE readme).
+5. **Before publishing:** written OK from VB-Audio to bundle VB-CABLE in the installer (see Decisions → Virtual mic).
+6. Test the installer on a clean Windows VM: VB-CABLE silent install, the driver-trust prompt, the rename on first start, autostart, uninstall.
 
 ---
 

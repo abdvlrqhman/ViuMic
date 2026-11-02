@@ -1,6 +1,6 @@
 <!--
-  Live strip: the raw mic level (lavender) behind the cleaned voice (mint), newest on the right.
-  Whatever lavender shows around the mint is the noise ViuMic is removing.
+  Live chart: your raw mic level (muted) behind the cleaned voice (emerald), newest on the right.
+  The muted area around the emerald one is the noise ViuMic is removing.
 -->
 <script lang="ts">
   import { untrack } from 'svelte'
@@ -44,44 +44,30 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
 
-    const style = getComputedStyle(canvas)
+    const css = getComputedStyle(canvas)
     const mid = h / 2
     // Mirrored envelope around the centre line, like a waveform.
-    const band = (data: Float32Array, color: string) => {
+    const band = (data: Float32Array, color: string, alpha: number) => {
       ctx.beginPath()
-      for (let i = 0; i < POINTS; i++) ctx.lineTo((i / (POINTS - 1)) * w, mid - data[i] * mid * 0.92)
-      for (let i = POINTS - 1; i >= 0; i--) ctx.lineTo((i / (POINTS - 1)) * w, mid + data[i] * mid * 0.92)
+      for (let i = 0; i < POINTS; i++) ctx.lineTo((i / (POINTS - 1)) * w, mid - data[i] * mid * 0.9)
+      for (let i = POINTS - 1; i >= 0; i--) ctx.lineTo((i / (POINTS - 1)) * w, mid + data[i] * mid * 0.9)
       ctx.closePath()
+      ctx.globalAlpha = alpha
       ctx.fillStyle = color
       ctx.fill()
     }
-    band(raw, style.getPropertyValue('--noise'))
-    band(clean, style.getPropertyValue(on ? '--clean' : '--text-dim'))
-    ctx.fillStyle = style.getPropertyValue('--line')
-    ctx.fillRect(0, mid - 0.5, w, 1)
+    band(raw, css.getPropertyValue('--muted-foreground'), 0.35)
+    band(clean, css.getPropertyValue(on ? '--chart-2' : '--muted-foreground'), on ? 1 : 0.7)
+    ctx.globalAlpha = 1
   }
 </script>
 
 <div
-  class="strip"
+  class="h-28 w-full overflow-hidden rounded-md border bg-muted/30"
   role="img"
-  aria-label="Live levels: your microphone in lavender, the cleaned voice in mint"
+  aria-label="Live levels: your microphone, and the cleaned voice in green"
   bind:clientWidth={width}
   bind:clientHeight={height}
 >
-  <canvas bind:this={canvas}></canvas>
+  <canvas bind:this={canvas} class="block size-full"></canvas>
 </div>
-
-<style>
-  .strip {
-    height: 104px;
-    border-radius: 14px;
-    background: var(--surface);
-    overflow: hidden;
-  }
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-</style>

@@ -3,9 +3,7 @@
 use anyhow::{Context, Result, bail};
 use std::io::Write;
 use std::{env, thread, time::Duration};
-use viumic_engine::{
-    self as engine, Config, Deepen, Denoiser, Engine, Model, SAMPLE_RATE, UNLIMITED_DB,
-};
+use viumic_engine::{self as engine, Config, Denoiser, Engine, Model, SAMPLE_RATE, UNLIMITED_DB};
 
 const USAGE: &str = "\
 ViuMic: AI noise removal for your microphone
@@ -19,7 +17,6 @@ usage:
 options:
   --model dpdfnet|rnnoise   dpdfnet = best quality (default), rnnoise = very light on CPU
   --strength DB         max noise attenuation in dB (default: unlimited)
-  --deep SEMITONES      lower your voice by this many semitones (default: 0 = off)
   --hum 50|60|off       remove mains hum: 50 Hz (default; most of the world), 60 Hz (the Americas)
   --bypass              turn noise removal off
   --output NAME         default: VB-CABLE's \"CABLE Input\"; use your headphones to hear yourself
@@ -47,7 +44,6 @@ fn main() -> Result<()> {
         },
         strength_db: num("--strength", UNLIMITED_DB)?,
         enabled: !args.iter().any(|a| a == "--bypass"),
-        depth: num("--deep", 0.0)?,
         hum_hz: match opt("--hum").as_deref() {
             Some("off") => None,
             _ => Some(num("--hum", 50.0)?),
@@ -172,13 +168,6 @@ fn denoise(input: &str, output: &str, cfg: &Config) -> Result<()> {
     if cfg.enabled {
         let mut den = Denoiser::new(cfg.model, cfg.strength_db, cfg.hum_hz)?;
         audio = engine::process_buffer(&audio, den.delay(), |i, o| den.process(i, o))?;
-    }
-    if cfg.depth > 0.0 {
-        let mut deep = Deepen::default();
-        audio = engine::process_buffer(&audio, deep.delay(), |i, o| {
-            deep.process(cfg.depth, i, o);
-            Ok(())
-        })?;
     }
 
     let spec = hound::WavSpec {
