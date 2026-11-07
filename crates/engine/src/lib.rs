@@ -9,6 +9,8 @@
 mod denoise;
 mod dpdfnet;
 mod dynamics;
+#[cfg(windows)]
+mod exclusive;
 
 pub use denoise::{Denoiser, HOP, Model, SAMPLE_RATE, UNLIMITED_DB};
 
@@ -149,6 +151,8 @@ struct Shared {
     prime: AtomicU32,
     xruns: AtomicU32,
     load: AtomicF32,
+    /// The user muted their mic or ViuMic's (mute key, taskbar): send silence.
+    muted: AtomicBool,
     error: Mutex<Option<String>>,
 }
 
@@ -166,9 +170,52 @@ pub struct Engine {
     delay: usize,
     pub input_name: String,
     pub output_name: String,
+    /// Output is hidden from screen sharing (exclusive mode into the cable).
+    pub private_output: bool,
+    /// Why the output isn't private, when ViuMic tried and Windows said no.
+    pub private_note: Option<String>,
     dsp: Option<JoinHandle<()>>,
     // Dropped after `dsp` is joined (see Drop).
-    _streams: (cpal::Stream, cpal::Stream),
+    _streams: (cpal::Stream, Output),
+}
+
+enum Output {
+    Shared(cpal::Stream),
+    /// Held only so that dropping the engine stops and joins the render thread.
+    #[cfg(windows)]
+    Exclusive {
+        _renderer: exclusive::Renderer,
+    },
+}
+
+/// Output side of the jitter buffer, shared by the cpal and the exclusive-mode outputs.
+struct Player {
+    rx: Consumer<f32>,
+    priming: bool,
+}
+
+impl Player {
+    /// Calls `write(frame, sample)` for `frames` frames: silence while (re)priming, and an
+    /// underrun grows the jitter buffer a step (see `PRIME_START`).
+    fn fill(&mut self, sh: &Shared, frames: usize, mut write: impl FnMut(usize, f32)) {
+        if self.priming && self.rx.slots() < sh.prime.load(Relaxed) as usize {
+            (0..frames).for_each(|i| write(i, 0.0));
+            return;
+        }
+        self.priming = false;
+        for i in 0..frames {
+            let s = self.rx.pop().unwrap_or_else(|_| {
+                self.priming = true;
+                0.0
+            });
+            write(i, s);
+        }
+        if self.priming {
+            sh.underruns.fetch_add(1, Relaxed);
+            let grown = (sh.prime.load(Relaxed) as usize + PRIME_STEP).min(PRIME_MAX);
+            sh.prime.store(grown as u32, Relaxed);
+        }
+    }
 }
 
 impl Engine {
@@ -220,7 +267,7 @@ impl Engine {
         shared.prime.store(PRIME_START as u32, Relaxed);
 
         let (mut mic_tx, mic_rx) = RingBuffer::<f32>::new(SAMPLE_RATE as usize);
-        let (out_tx, mut out_rx) = RingBuffer::<f32>::new(SAMPLE_RATE as usize);
+        let (out_tx, out_rx) = RingBuffer::<f32>::new(SAMPLE_RATE as usize);
 
         let sh = shared.clone();
         let input_stream = input.build_input_stream(
@@ -244,37 +291,13 @@ impl Engine {
             None,
         )?;
 
-        let sh = shared.clone();
-        let mut priming = true;
-        let output_stream = output.build_output_stream(
-            out_cfg,
-            move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
-                let t = info.timestamp();
-                sh.playback_us.store(
-                    t.playback.saturating_duration_since(t.callback).as_micros() as u32,
-                    Relaxed,
-                );
-                if priming && out_rx.slots() < sh.prime.load(Relaxed) as usize {
-                    data.fill(0.0);
-                    return;
-                }
-                priming = false;
-                for frame in data.chunks_exact_mut(out_ch) {
-                    let s = out_rx.pop().unwrap_or_else(|_| {
-                        priming = true;
-                        0.0
-                    });
-                    frame.fill(s);
-                }
-                if priming {
-                    sh.underruns.fetch_add(1, Relaxed);
-                    let grown = (sh.prime.load(Relaxed) as usize + PRIME_STEP).min(PRIME_MAX);
-                    sh.prime.store(grown as u32, Relaxed);
-                }
-            },
-            stream_error(&shared),
-            None,
-        )?;
+        let player = Player {
+            rx: out_rx,
+            priming: true,
+        };
+        let (output_stream, private_note) =
+            open_output(&output, &output_name, out_cfg, out_ch, player, &shared)?;
+        let private_output = !matches!(output_stream, Output::Shared(_));
 
         // The model loads on the DSP thread (it isn't Send); wait for it before playing.
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -293,13 +316,17 @@ impl Engine {
         let delay = ready_rx.recv().context("DSP thread died")??;
 
         input_stream.play()?;
-        output_stream.play()?;
+        if let Output::Shared(stream) = &output_stream {
+            stream.play()?;
+        }
         Ok(Self {
             shared,
             delay,
             input_name,
             output_name,
             dsp: Some(dsp),
+            private_output,
+            private_note,
             _streams: (input_stream, output_stream),
         })
     }
@@ -310,6 +337,11 @@ impl Engine {
 
     pub fn set_strength(&self, db: f32) {
         self.shared.strength_db.set(db);
+    }
+
+    /// Mirrors the user's mute (mute key, taskbar): ViuMic sends silence while muted.
+    pub fn set_muted(&self, muted: bool) {
+        self.shared.muted.store(muted, Relaxed);
     }
 
     pub fn stats(&self) -> Stats {
@@ -374,6 +406,10 @@ fn dsp_loop(sh: &Shared, den: &mut Denoiser, mut mic: Consumer<f32>, mut out: Pr
             output = input;
         }
         limiter.apply(&mut output);
+        // Keep the model running while muted so unmuting has no warm-up artefact.
+        if sh.muted.load(Relaxed) {
+            output = [0.0; HOP];
+        }
         sh.load
             .max(started.elapsed().as_secs_f32() / (HOP as f32 / SAMPLE_RATE as f32));
         sh.in_peak.max(peak(&input));
@@ -392,9 +428,62 @@ fn dsp_loop(sh: &Shared, den: &mut Denoiser, mut mic: Consumer<f32>, mut out: Pr
     }
 }
 
+/// Into the cable: exclusive mode, so screen shares can't record the user's voice from
+/// ViuMic's playback (see `exclusive`). Anywhere else (headphones, for testing), or when Windows
+/// refuses exclusive access: a normal shared stream, plus the reason it isn't private.
+fn open_output(
+    device: &cpal::Device,
+    name: &str,
+    cfg: cpal::StreamConfig,
+    channels: usize,
+    player: Player,
+    sh: &Arc<Shared>,
+) -> Result<(Output, Option<String>)> {
+    let mut note = None;
+    #[cfg(windows)]
+    let player = if name.contains(CABLE_DEVICE) {
+        match exclusive::Renderer::start(name, channels, player, sh.clone()) {
+            Ok(r) => return Ok((Output::Exclusive { _renderer: r }, None)),
+            Err((e, Some(p))) => {
+                note = Some(format!("{e:#}"));
+                p
+            }
+            Err((e, None)) => return Err(e),
+        }
+    } else {
+        player
+    };
+    #[cfg(not(windows))]
+    let _ = name;
+    let mut player = player;
+    let shm = sh.clone();
+    let stream = device
+        .build_output_stream(
+            cfg,
+            move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                let t = info.timestamp();
+                shm.playback_us.store(
+                    t.playback.saturating_duration_since(t.callback).as_micros() as u32,
+                    Relaxed,
+                );
+                player.fill(&shm, data.len() / channels, |frame, s| {
+                    data[frame * channels..(frame + 1) * channels].fill(s);
+                });
+            },
+            stream_error(sh),
+            None,
+        )
+        // When exclusive failed because the cable is busy, the shared stream fails too: say why.
+        .map_err(|e| match &note {
+            Some(why) => anyhow::anyhow!("{why}"),
+            None => e.into(),
+        })?;
+    Ok((Output::Shared(stream), note))
+}
+
 /// MMCSS "Pro Audio" keeps the model on schedule while games load the CPU.
 #[cfg(windows)]
-fn boost_thread_priority() {
+pub(crate) fn boost_thread_priority() {
     use windows::{Win32::System::Threading::AvSetMmThreadCharacteristicsW, core::w};
     let mut task = 0;
     // Best effort: without it we run at normal priority.

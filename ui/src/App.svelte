@@ -20,7 +20,9 @@
   import TitleBar from '$lib/TitleBar.svelte'
   import {
     ALL_NOISE_DB,
+    fixSpeaker,
     getState,
+    makeDefaultMic,
     onState,
     setSettings,
     watchMeters,
@@ -103,9 +105,19 @@
   const micConnected = $derived(!!mic && !!view?.mics.includes(mic))
   const micOptions = $derived(view ? (mic && !micConnected ? [mic, ...view.mics] : view.mics) : [])
   const appMic = $derived(view?.appMic ?? 'ViuMic Microphone')
+  const muted = $derived(view?.muted ?? false)
   const status = $derived(
-    view?.error ? 'Needs attention' : on ? 'Cleaning' : 'Off',
+    view?.error ? 'Needs attention' : muted ? 'Muted' : on ? 'Cleaning' : 'Off',
   )
+  let fixError = $state<string | null>(null)
+  async function fix(action: () => Promise<View>) {
+    try {
+      view = await action()
+      fixError = null
+    } catch (e) {
+      fixError = String(e)
+    }
+  }
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden bg-background text-foreground">
@@ -124,18 +136,48 @@
             </Button>
           </Alert.Description>
         </Alert.Root>
-      {:else if view?.cableIsSpeaker}
-        <Alert.Root class="sm:col-span-2">
-          <TriangleAlert />
-          <Alert.Title>You can't hear anything right now</Alert.Title>
-          <Alert.Description>
-            Windows is sending your sound into ViuMic. Choose your speakers or headphones as the
-            output.
-            <Button variant="link" class="h-auto p-0" onclick={() => openUrl('ms-settings:sound')}>
-              Open sound settings
-            </Button>
-          </Alert.Description>
-        </Alert.Root>
+      {:else}
+        {#if view?.feedIsSpeaker}
+          <Alert.Root class="sm:col-span-2">
+            <TriangleAlert />
+            <Alert.Title>Some sound is going into ViuMic instead of your speakers</Alert.Title>
+            <Alert.Description>
+              Windows plays calls or other sound into ViuMic Feed, so you can't hear it.
+              <Button variant="link" class="h-auto p-0" onclick={() => fix(fixSpeaker)}>
+                Send it back to my speakers
+              </Button>
+            </Alert.Description>
+          </Alert.Root>
+        {/if}
+        {#if view && !view.micIsDefault}
+          <Alert.Root class="sm:col-span-2">
+            <Mic />
+            <Alert.Title>Make ViuMic your default microphone</Alert.Title>
+            <Alert.Description>
+              Then your laptop's mute key mutes ViuMic, and apps set to "Default" use your clean
+              voice.
+              <Button variant="link" class="h-auto p-0" onclick={() => fix(makeDefaultMic)}>
+                Make ViuMic the default
+              </Button>
+            </Alert.Description>
+          </Alert.Root>
+        {/if}
+        {#if view && !view.privateOutput && view.privateNote}
+          <Alert.Root class="sm:col-span-2">
+            <TriangleAlert />
+            <Alert.Title>Screen shares might include your voice</Alert.Title>
+            <Alert.Description>
+              ViuMic couldn't hide its audio from screen sharing: {view.privateNote}.
+            </Alert.Description>
+          </Alert.Root>
+        {/if}
+        {#if fixError}
+          <Alert.Root variant="destructive" class="sm:col-span-2">
+            <TriangleAlert />
+            <Alert.Title>That didn't work</Alert.Title>
+            <Alert.Description>{fixError}</Alert.Description>
+          </Alert.Root>
+        {/if}
       {/if}
       {#if view?.error && !view.cableMissing}
         <Alert.Root variant="destructive" class="sm:col-span-2">
@@ -149,10 +191,14 @@
         <Card.Header>
           <Card.Title class="flex items-center gap-2">
             Noise removal
-            <Badge variant={view?.error ? 'destructive' : on ? 'default' : 'secondary'}>{status}</Badge>
+            <Badge variant={view?.error ? 'destructive' : muted || !on ? 'secondary' : 'default'}>{status}</Badge>
           </Card.Title>
           <Card.Description>
-            {on ? 'Apps hear your voice without the background.' : 'Apps hear your mic as it is.'}
+            {muted
+              ? 'Muted in Windows. Apps and screen shares hear silence.'
+              : on
+                ? 'Apps hear your voice without the background.'
+                : 'Apps hear your mic as it is.'}
           </Card.Description>
           <Card.Action>
             <Switch
@@ -237,6 +283,9 @@
           <Card.Description>
             In Discord, Zoom, OBS or any app, choose <span class="font-medium text-foreground">{appMic}</span> as
             your microphone, and turn off the app's own noise suppression.
+            {#if view?.privateOutput}
+              Your voice is hidden from screen sharing, so muting in Discord mutes you everywhere.
+            {/if}
           </Card.Description>
         </Card.Header>
         <Card.Footer class="text-xs text-muted-foreground">

@@ -110,6 +110,25 @@ The original target was ≤ 80 ms total. DPDFNet overshoots it by ~15 ms, a trad
    - The user says the wave is in the raw mic too (audible all through, masked when talking loud). At 0.18 Hz resolution: one real hum line at 49.99 Hz; nothing at exact harmonics. Added de-hum. If the wave remains, it's the mic's broadband hiss (floor −40 dBFS, gain high enough to clip): a setup problem (input level, Mic Boost, the "Microphone Array" input), not a model one.
    - De-hum didn't remove the wave. The user says it rides on the voice (worse when quiet) and isn't hiss. So it's already in the raw driver signal. Main suspect: the Realtek/Windows mic effects (AGC or noise suppression). Test: turn "Audio enhancements" off and re-record raw. If confirmed, the real fix is capturing in WASAPI raw mode (`AUDCLNT_STREAMOPTIONS_RAW`, which bypasses the driver's effects for our stream only). cpal 0.18 doesn't expose it, so it needs our own WASAPI capture path or a cpal patch.
    - ✅ Enhancements off (`raw2.wav`) makes the noise constant instead of riding on the voice, which confirms the driver effects caused the "wave with voice". Noise-only recording (`noise.wav`): 72% of the energy is 20–80 Hz rumble swelling by ±7 dB, plus 50/100 Hz hum (+21/+19 dB lines, swelling by up to 21 dB); hiss above 2 kHz is perfectly steady. ViuMic's chain removes 63 dB of it (−36 → −100 dBFS), even without the dynamics. README step 4 now says to turn enhancements off. Phase 2: the app should detect and warn about this; later, WASAPI raw-mode capture.
+   - ✅ **Screen-share leak (2026-11-07).** The user's mic was audible in Discord screen shares even
+     while muted in Discord or with the ASUS key. Cause: Discord's whole-screen share records
+     every process except Discord (process loopback, not tied to one output device), and
+     ViuMic's playback into the cable was a shared-mode stream. Reproduced with a scratch
+     tool doing Discord's capture: tone into ViuMic Feed in shared mode came through at
+     −13 dBFS; in **exclusive mode**, nothing (−180 dBFS), while "ViuMic Microphone" still
+     got it at full level. The engine now renders into the cable in exclusive mode
+     (`crates/engine/src/exclusive.rs`, 48 kHz, format negotiated, 16-bit on VB-CABLE, default
+     10 ms period). It falls back to shared mode with a visible reason. Side effect: Windows'
+     share of the delay drops from 37–47 ms to ~30 ms. A 10-min exclusive run: 0 dropped,
+     2 underruns.
+     Mute: the ASUS key mutes the Windows default mic, which was NVIDIA Broadcast's (unused).
+     ViuMic now mirrors Windows mute of the chosen mic and of ViuMic Microphone (polled every
+     200 ms, sends silence, shows Muted). It offers one click to make ViuMic Microphone the
+     default mic for all roles. VB-CABLE's install had also made ViuMic Feed the
+     *communications* speaker; there's a one-click fix for that too. Both use
+     IPolicyConfig::SetDefaultEndpoint and only run when the user clicks.
+     CLI binary renamed `viumic-cli`: `viumic.exe` and `ViuMic.exe` are the same file on
+     Windows, and the app build overwrote the CLI.
    - Measuring lessons: coarse spectra near a voice's pitch lie; `cargo test`/`clippy` don't rebuild `viumic.exe`, so run `cargo build` before using the CLI for measurements.
    - ✅ Earlier: user heard words cut off. Cause: DFN zeroes every 10 ms hop whose local SNR is under −10 dB (a hard gate). Fix: gate at −12 dB plus a 200 ms hangover after speech. On test speech, chopped voiced hops went 6 → 0 and noise in pauses went −57 → −53 dBFS.
 2. Resample mics that aren't 48 kHz with `rubato` (the engine errors on them today). WASAPI already converts the output side.

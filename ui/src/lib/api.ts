@@ -23,9 +23,18 @@ export interface View {
   mics: string[]
   error: string | null
   cableMissing: boolean
-  cableIsSpeaker: boolean
+  /** The cable is a default speaker (apps, media or calls): that sound vanishes into it. */
+  feedIsSpeaker: boolean
+  /** "ViuMic Microphone" is Windows' default mic, so mute keys and "Default" apps use it. */
+  micIsDefault: boolean
   /** What apps call ViuMic's clean mic, e.g. "ViuMic Microphone". */
   appMic: string | null
+  /** Muted in Windows (mute key, taskbar): ViuMic sends silence everywhere. */
+  muted: boolean
+  /** ViuMic's output is hidden from screen sharing. */
+  privateOutput: boolean
+  /** Why it isn't, when Windows refused. */
+  privateNote: string | null
 }
 
 export interface Meters {
@@ -40,6 +49,12 @@ export interface Meters {
 export const getState = () => invoke<View>('get_state')
 
 export const setSettings = (settings: Settings) => invoke<View>('set_settings', { settings })
+
+/** Makes "ViuMic Microphone" Windows' default mic for every role. */
+export const makeDefaultMic = () => invoke<View>('make_default_mic')
+
+/** Moves every speaker role off the cable, back to real speakers. */
+export const fixSpeaker = () => invoke<View>('fix_speaker')
 
 /** About 30 updates a second while the window lives. */
 export function watchMeters(onMeters: (m: Meters) => void) {

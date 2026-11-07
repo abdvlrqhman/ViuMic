@@ -13,5 +13,13 @@ ort = "=2.0.0-rc.15"
 realfft = "3.5.1"
 
 [target.'cfg(windows)'.dependencies]
-# Already pulled in by cpal; used for MMCSS thread priority.
-windows = { version = "0.62", features = ["Win32_System_Threading"] }
+# Already pulled in by cpal; used for MMCSS thread priority and the exclusive-mode output.
+windows = { version = "0.62", features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }

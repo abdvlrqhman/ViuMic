@@ -21,15 +21,22 @@ Status: early. The desktop app works; the first release is next. See [PLAN.md](P
 
 Closing the window keeps ViuMic running in the tray; Quit is in the tray menu.
 
+**Private by design.** Screen-share audio (Discord's "Entire screen", OBS desktop audio)
+records what every app *plays*. ViuMic plays your voice into its virtual cable in exclusive
+mode, which Windows' loopback capture can't see, so muting in Discord mutes you everywhere.
+ViuMic also follows Windows mute: if your mic or ViuMic Microphone is muted (laptop mute key,
+taskbar), it sends silence. Click **Make ViuMic the default** in the app so your mute key
+controls ViuMic.
+
 ## CLI
 
 ```
-viumic devices                          list mics and outputs
-viumic run --output "Headphones"        hear yourself instead of sending to the ViuMic microphone
-viumic run --model rnnoise              much lighter model, for weak CPUs
-viumic run --hum 60                     mains hum is 60 Hz where you live (the Americas)
-viumic denoise in.wav out.wav           offline, 48 kHz WAV
-viumic record raw.wav --seconds 20      raw mic sample, for bug reports
+viumic-cli devices                          list mics and outputs
+viumic-cli run --output "Headphones"        hear yourself instead of sending to the ViuMic microphone
+viumic-cli run --model rnnoise              much lighter model, for weak CPUs
+viumic-cli run --hum 60                     mains hum is 60 Hz where you live (the Americas)
+viumic-cli denoise in.wav out.wav           offline, 48 kHz WAV
+viumic-cli record raw.wav --seconds 20      raw mic sample, for bug reports
 ```
 
 ## Build

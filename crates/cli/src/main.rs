@@ -9,10 +9,10 @@ const USAGE: &str = "\
 ViuMic: AI noise removal for your microphone
 
 usage:
-  viumic devices
-  viumic run     [--input NAME] [--output NAME] [OPTIONS]
-  viumic denoise IN.wav OUT.wav [OPTIONS]
-  viumic record  OUT.wav [--input NAME] [--seconds N]   raw mic, for bug reports
+  viumic-cli devices
+  viumic-cli run     [--input NAME] [--output NAME] [OPTIONS]
+  viumic-cli denoise IN.wav OUT.wav [OPTIONS]
+  viumic-cli record  OUT.wav [--input NAME] [--seconds N]   raw mic, for bug reports
 
 options:
   --model dpdfnet|rnnoise   dpdfnet = best quality (default), rnnoise = very light on CPU
@@ -93,6 +93,13 @@ fn run(cfg: &Config) -> Result<()> {
         "{} -> {}   (Ctrl+C to stop)",
         engine.input_name, engine.output_name
     );
+    match (engine.private_output, &engine.private_note) {
+        (true, _) => println!("output is private: screen shares can't record it"),
+        (false, Some(why)) => {
+            println!("output is NOT private ({why}): screen shares may record it")
+        }
+        (false, None) => {}
+    }
     loop {
         thread::sleep(Duration::from_millis(250));
         if let Some(e) = engine.take_error() {

@@ -2,7 +2,7 @@
 //! while the window is hidden; closing the window hides it, and Quit (tray) exits.
 
 #[cfg(windows)]
-mod cable;
+mod devices;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -16,6 +16,8 @@ use viumic_engine::{self as engine, Config, Engine, Model, UNLIMITED_DB};
 
 /// How often meters go to the window (and device errors are checked).
 const TICK: Duration = Duration::from_millis(33);
+/// Check the Windows mute state every this many ticks (~200 ms): mute keys feel instant.
+const MUTE_EVERY: u32 = 6;
 /// Wait between attempts to (re)start the engine after a device error.
 const RETRY: Duration = Duration::from_secs(2);
 /// Device names containing this belong to VB-CABLE.
@@ -72,10 +74,18 @@ struct View {
     mics: Vec<String>,
     error: Option<String>,
     cable_missing: bool,
-    /// Windows plays all sound into the cable, so the user hears nothing.
-    cable_is_speaker: bool,
+    /// The cable is a default speaker (for apps, media or calls): that sound vanishes into it.
+    feed_is_speaker: bool,
+    /// "ViuMic Microphone" is Windows' default mic, so mute keys and "Default" apps use it.
+    mic_is_default: bool,
     /// What apps call the clean mic ("ViuMic Microphone" once renamed).
     app_mic: Option<String>,
+    /// The user muted their mic or ViuMic's in Windows (mute key, taskbar); ViuMic sends silence.
+    muted: bool,
+    /// ViuMic's playback into the cable is hidden from screen sharing (exclusive mode).
+    private_output: bool,
+    /// Why it isn't, when Windows refused.
+    private_note: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -157,6 +167,7 @@ struct App {
     last_start: Option<Instant>,
     meters: Option<Channel<Meters>>,
     settings_path: PathBuf,
+    muted: bool,
 }
 
 impl App {
@@ -165,7 +176,11 @@ impl App {
         View {
             settings: self.settings.clone(),
             cable_missing: !d.has_cable(),
-            cable_is_speaker: d.default_output.is_some_and(|n| n.contains(CABLE)),
+            feed_is_speaker: speaker_is_cable(&d),
+            mic_is_default: mic_is_default(),
+            muted: self.muted,
+            private_output: self.engine.as_ref().is_some_and(|e| e.private_output),
+            private_note: self.engine.as_ref().and_then(|e| e.private_note.clone()),
             app_mic: d
                 .inputs
                 .iter()
@@ -185,7 +200,7 @@ impl App {
         self.last_start = Some(Instant::now());
         // Best effort: an unrenamed cable still works, it's just called "CABLE Output".
         #[cfg(windows)]
-        let _ = cable::brand();
+        let _ = devices::brand();
         let devices = engine::list_devices().unwrap_or_default();
         let Some(mic) = self.settings.input.clone().or_else(|| first_pick(&devices)) else {
             self.error = Some("No microphone found. Plug one in".into());
@@ -215,6 +230,7 @@ impl App {
         };
         match Engine::start(&config) {
             Ok(e) => {
+                e.set_muted(self.muted);
                 self.engine = Some(e);
                 self.error = None;
             }
@@ -255,6 +271,36 @@ fn first_pick(d: &engine::Devices) -> Option<String> {
         .or_else(|| d.inputs.iter().find(|n| !n.contains(CABLE)).cloned())
 }
 
+/// Whether the user muted their chosen mic or ViuMic's in Windows: the laptop mute key, the
+/// taskbar, or Sound settings. ViuMic then sends silence: muting must also mute screen shares.
+fn user_muted(mic: Option<&str>) -> bool {
+    #[cfg(windows)]
+    return devices::any_muted(|n| Some(n) == mic || n.contains(CABLE));
+    #[cfg(not(windows))]
+    {
+        let _ = mic;
+        false
+    }
+}
+
+fn mic_is_default() -> bool {
+    #[cfg(windows)]
+    return devices::defaults().mic_is_viumic;
+    #[cfg(not(windows))]
+    true
+}
+
+/// The cable as a default speaker for any role (apps, media, calls).
+fn speaker_is_cable(d: &engine::Devices) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = d;
+        devices::defaults().feed_is_speaker
+    }
+    #[cfg(not(windows))]
+    d.default_output.as_ref().is_some_and(|n| n.contains(CABLE))
+}
+
 fn lock<'a>(app: &'a State<'_, Mutex<App>>) -> MutexGuard<'a, App> {
     app.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -275,6 +321,22 @@ fn set_settings(handle: AppHandle, app: State<'_, Mutex<App>>, settings: Setting
     view
 }
 
+/// One click: "ViuMic Microphone" becomes Windows' default mic for every role.
+#[tauri::command]
+fn make_default_mic(app: State<'_, Mutex<App>>) -> Result<View, String> {
+    #[cfg(windows)]
+    devices::make_default_mic().map_err(|e| e.to_string())?;
+    Ok(lock(&app).view())
+}
+
+/// One click: no speaker role points into the cable any more.
+#[tauri::command]
+fn fix_speaker(app: State<'_, Mutex<App>>) -> Result<View, String> {
+    #[cfg(windows)]
+    devices::fix_speaker().map_err(|e| e.to_string())?;
+    Ok(lock(&app).view())
+}
+
 #[tauri::command]
 fn watch_meters(app: State<'_, Mutex<App>>, channel: Channel<Meters>) {
     lock(&app).meters = Some(channel);
@@ -283,11 +345,23 @@ fn watch_meters(app: State<'_, Mutex<App>>, channel: Channel<Meters>) {
 /// Background loop: starts the engine, restarts it after device errors, and feeds the meters.
 fn supervise(handle: AppHandle) {
     let mut cpu = CpuMeter::new();
+    let mut tick = 0u32;
     loop {
         std::thread::sleep(TICK);
+        tick = tick.wrapping_add(1);
         let state = handle.state::<Mutex<App>>();
         let mut a = lock(&state);
         let mut changed = false;
+        if tick.is_multiple_of(MUTE_EVERY) {
+            let muted = user_muted(a.settings.input.as_deref());
+            if muted != a.muted {
+                a.muted = muted;
+                if let Some(e) = &a.engine {
+                    e.set_muted(muted);
+                }
+                changed = true;
+            }
+        }
         if let Some(err) = a.engine.as_ref().and_then(Engine::take_error) {
             // A lost device kills the streams: restart. Model hiccups don't; just show them.
             if err.starts_with("audio device") {
@@ -360,7 +434,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_state,
             set_settings,
-            watch_meters
+            watch_meters,
+            make_default_mic,
+            fix_speaker
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -421,6 +497,7 @@ pub fn run() {
                 error: None,
                 last_start: None,
                 meters: None,
+                muted: false,
                 settings_path,
             }));
             let handle = app.handle().clone();
