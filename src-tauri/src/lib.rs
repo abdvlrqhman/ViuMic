@@ -423,13 +423,17 @@ fn toggle_from_tray(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // Must be first: a second launch just brings the running window forward.
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec![HIDDEN_ARG]),
-        ))
+    // Must be first: a second launch just brings the running window forward.
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)));
+    // Dev builds load their UI from the Vite dev server, so starting one with Windows opens a
+    // broken window: only installed (release) builds may register autostart.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec![HIDDEN_ARG]),
+    ));
+    builder
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_state,

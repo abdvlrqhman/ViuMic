@@ -58,6 +58,8 @@
   }
   let meters = $state<Meters>({ inPeak: 0, outPeak: 0, latencyMs: 0, cpuPercent: 0 })
   let startWithWindows = $state(false)
+  // Dev builds don't register autostart (see src-tauri): the switch says so instead.
+  let autostartAvailable = $state(true)
   // Follows the saved setting, but moves freely while dragging.
   let strength = $state(STRENGTH_MAX)
 
@@ -80,7 +82,7 @@
     }, 500)
     isEnabled()
       .then((on) => (startWithWindows = on))
-      .catch(() => {})
+      .catch(() => (autostartAvailable = false))
     const unlisten = onState((v) => (view = v))
     // Mics come and go (USB, Bluetooth): refresh the list whenever the window comes back.
     window.addEventListener('focus', refresh)
@@ -342,9 +344,16 @@
           <div class="flex items-center justify-between gap-4">
             <Label for="autostart" class="flex-col items-start gap-1">
               Start with Windows
-              <span class="font-normal text-muted-foreground">Opens quietly in the tray.</span>
+              <span class="font-normal text-muted-foreground">
+                {autostartAvailable ? 'Opens quietly in the tray.' : 'Only in the installed app.'}
+              </span>
             </Label>
-            <Switch id="autostart" checked={startWithWindows} onCheckedChange={setStartWithWindows} />
+            <Switch
+              id="autostart"
+              checked={startWithWindows}
+              disabled={!autostartAvailable}
+              onCheckedChange={setStartWithWindows}
+            />
           </div>
         </Card.Content>
       </Card.Root>

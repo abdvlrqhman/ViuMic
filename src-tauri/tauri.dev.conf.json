@@ -1,0 +1,20 @@
+{
+  "identifier": "com.viumic.desktop.dev",
+  "productName": "ViuMic Dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ViuMic Dev",
+        "width": 480,
+        "height": 760,
+        "minWidth": 380,
+        "minHeight": 560,
+        "center": true,
+        "visible": false,
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  }
+}
