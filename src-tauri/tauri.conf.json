@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ViuMic",
   "version": "0.1.0",
-  "identifier": "com.viumic.desktop",
+  "identifier": "net.spacie.viumic",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:5173",
@@ -40,9 +40,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "publisher": "ViuMic",
+    "publisher": "Spacie",
     "resources": {
-      "../vendor/vbcable/*": "vbcable/"
+      "../vendor/vbcable/*": "vbcable/",
+      "../LICENSE-MIT": "LICENSE-MIT",
+      "../LICENSE-APACHE": "LICENSE-APACHE",
+      "../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md"
     },
     "windows": {
       "nsis": {
@@ -50,6 +53,19 @@
         "installerHooks": "installer-hooks.nsh"
       }
     },
-    "copyright": "ViuMic contributors. Virtual microphone: VB-CABLE by VB-Audio (www.vb-cable.com)."
+    "copyright": "© 2026 Spacie. Virtual microphone: VB-CABLE by VB-Audio (www.vb-cable.com), donationware.",
+    "homepage": "https://github.com/abdvlrqhman/ViuMic",
+    "license": "MIT OR Apache-2.0"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEOUU5NkE3NERDNEY4MUIKUldRYitNUk5wNWFlellYdk45c3NLUWRTRi92NmtERVFoZHVoNzJTNkRQUTkvK3NyeStqVmQ2UjQK",
+      "endpoints": [
+        "https://github.com/abdvlrqhman/ViuMic/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

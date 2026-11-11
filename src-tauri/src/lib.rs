@@ -427,12 +427,15 @@ pub fn run() {
     let builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)));
     // Dev builds load their UI from the Vite dev server, so starting one with Windows opens a
-    // broken window: only installed (release) builds may register autostart.
+    // broken window, and updating one would install the released app over it: only installed
+    // (release) builds get autostart and updates.
     #[cfg(not(debug_assertions))]
-    let builder = builder.plugin(tauri_plugin_autostart::init(
-        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-        Some(vec![HIDDEN_ARG]),
-    ));
+    let builder = builder
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![HIDDEN_ARG]),
+        ))
+        .plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![

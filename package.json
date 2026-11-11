@@ -1,6 +1,7 @@
 {
   "name": "viumic",
   "private": true,
+  "packageManager": "pnpm@11.15.0",
   "scripts": {
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "build": "tauri build",

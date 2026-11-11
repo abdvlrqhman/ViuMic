@@ -1,0 +1,69 @@
+name: Release
+
+# Push a tag vX.Y.Z (the version in Cargo.toml and src-tauri/tauri.conf.json) to build the
+# installer into a draft GitHub release. Publishing the draft rolls the update out: installed
+# copies read releases/latest/download/latest.json, which only covers published releases.
+# A failed run can be re-run from the Actions tab; it reuses the same tag and draft.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tag matches the app version
+        shell: bash
+        run: |
+          app=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if [ "$GITHUB_REF_NAME" != "v$app" ] || [ "$app" != "$crate" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME, tauri.conf.json $app and Cargo.toml $crate must match"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update files; the matching public key is in tauri.conf.json. This is
+          # Tauri's own free update signature, not Windows code signing.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: pnpm tauri
+          args: --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: ViuMic ${{ github.ref_name }}
+          releaseBody: |
+            Download the **x64-setup.exe** file below and run it. It also installs the ViuMic Microphone ([VB-CABLE](https://vb-audio.com/Cable/) by VB-Audio, donationware). Already installed? ViuMic offers this update itself.
+
+            The installer isn't code-signed. If Windows SmartScreen says "Windows protected your PC", choose **More info → Run anyway**. `SHA256SUMS.txt` has the installer's checksum.
+          generateReleaseNotes: true
+          releaseDraft: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+      - name: Checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd target/release/bundle/nsis
+          sha256sum *-setup.exe | tee SHA256SUMS.txt
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber

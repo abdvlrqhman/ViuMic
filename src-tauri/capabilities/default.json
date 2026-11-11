@@ -15,11 +15,15 @@
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
+    "updater:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
         {
           "url": "https://vb-audio.com/*"
+        },
+        {
+          "url": "https://spacie.net/*"
         },
         {
           "url": "ms-settings:*"

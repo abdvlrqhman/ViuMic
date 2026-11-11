@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        patterns: ['*']
+    ignore:
+      # Pinned on purpose: ort's release candidates change the session API between versions.
+      - dependency-name: ort
+  - package-ecosystem: npm
+    directories: [/, /ui]
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

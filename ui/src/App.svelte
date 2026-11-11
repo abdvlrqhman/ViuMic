@@ -3,7 +3,10 @@
   import { Tween } from 'svelte/motion'
   import { openUrl } from '@tauri-apps/plugin-opener'
   import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
+  import { getVersion } from '@tauri-apps/api/app'
+  import { check, type Update } from '@tauri-apps/plugin-updater'
   import Cpu from '@lucide/svelte/icons/cpu'
+  import Download from '@lucide/svelte/icons/download'
   import Mic from '@lucide/svelte/icons/mic'
   import Timer from '@lucide/svelte/icons/timer'
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
@@ -36,6 +39,10 @@
   const STRENGTH_MIN = 6
   const STRENGTH_MAX = 51
   const VB_CABLE_URL = 'https://vb-audio.com/Cable/'
+  const SPACIE_URL = 'https://spacie.net/'
+  // ViuMic runs for days in the tray, so it looks for a new release now and then. It never
+  // installs on its own: that would cut the mic mid-call and ask Windows for permission.
+  const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
   const HUM = [
     { value: '50', label: '50 Hz (most of the world)' },
     { value: '60', label: '60 Hz (the Americas)' },
@@ -60,6 +67,13 @@
   let startWithWindows = $state(false)
   // Dev builds don't register autostart (see src-tauri): the switch says so instead.
   let autostartAvailable = $state(true)
+  // Like autostart, updates exist only in the installed app (see src-tauri).
+  const updatesAvailable = !import.meta.env.DEV
+  let version = $state('')
+  let available = $state<Update | null>(null)
+  let updateNote = $state('')
+  let checking = $state(false)
+  let installing = $state(false)
   // Follows the saved setting, but moves freely while dragging.
   let strength = $state(STRENGTH_MAX)
 
@@ -83,6 +97,12 @@
     isEnabled()
       .then((on) => (startWithWindows = on))
       .catch(() => (autostartAvailable = false))
+    getVersion().then((v) => (version = v))
+    let updates: ReturnType<typeof setInterval> | undefined
+    if (updatesAvailable) {
+      checkForUpdate(false)
+      updates = setInterval(() => checkForUpdate(false), UPDATE_EVERY_MS)
+    }
     const unlisten = onState((v) => (view = v))
     // Mics come and go (USB, Bluetooth): refresh the list whenever the window comes back.
     window.addEventListener('focus', refresh)
@@ -90,11 +110,48 @@
       unlisten.then((off) => off())
       window.removeEventListener('focus', refresh)
       clearInterval(stats)
+      clearInterval(updates)
     }
   })
 
   async function update(patch: Partial<Settings>) {
     if (view) view = await setSettings({ ...view.settings, ...patch })
+  }
+
+  /** Background checks stay quiet when offline; a click on "Check now" says what happened. */
+  async function checkForUpdate(manual: boolean) {
+    if (checking || installing) return
+    checking = true
+    try {
+      available = await check()
+      updateNote = available ? '' : manual ? 'You have the latest version.' : ''
+    } catch {
+      if (manual) updateNote = "Couldn't reach GitHub. Try again later."
+    } finally {
+      checking = false
+    }
+  }
+
+  /** Downloads and checks the signed installer, then runs it; Windows asks for permission once. */
+  async function installUpdate() {
+    if (!available) return
+    installing = true
+    updateNote = 'Downloading…'
+    let total = 0
+    let received = 0
+    try {
+      await available.downloadAndInstall((e) => {
+        if (e.event === 'Started') total = e.data.contentLength ?? 0
+        if (e.event === 'Progress') {
+          received += e.data.chunkLength
+          if (total) updateNote = `Downloading… ${Math.round((received / total) * 100)}%`
+        }
+        if (e.event === 'Finished') updateNote = 'Installing…'
+      })
+    } catch (e) {
+      updateNote = `The update didn't install: ${e}`
+      installing = false
+    }
   }
 
   async function setStartWithWindows(on: boolean) {
@@ -127,6 +184,20 @@
 
   <main class="flex-1 overflow-y-auto">
     <div class="mx-auto grid max-w-3xl gap-4 p-4 sm:grid-cols-2 sm:p-6">
+      {#if available}
+        <Alert.Root class="sm:col-span-2">
+          <Download />
+          <Alert.Title>ViuMic {available.version} is ready</Alert.Title>
+          <Alert.Description>
+            {installing
+              ? updateNote
+              : 'Installing takes a few seconds and restarts ViuMic. Windows asks for permission.'}
+            {#if !installing}
+              <Button variant="link" class="h-auto p-0" onclick={installUpdate}>Install and restart</Button>
+            {/if}
+          </Alert.Description>
+        </Alert.Root>
+      {/if}
       {#if view?.cableMissing}
         <Alert.Root variant="destructive" class="sm:col-span-2">
           <TriangleAlert />
@@ -355,8 +426,42 @@
               onCheckedChange={setStartWithWindows}
             />
           </div>
+          <div class="flex items-center justify-between gap-4">
+            <Label class="flex-col items-start gap-1">
+              Updates
+              <span class="font-normal text-muted-foreground">
+                {!updatesAvailable
+                  ? 'Only in the installed app.'
+                  : checking
+                    ? 'Checking…'
+                    : available
+                      ? `Version ${available.version} is ready.`
+                      : updateNote || `ViuMic ${version}`}
+              </span>
+            </Label>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!updatesAvailable || checking || installing}
+              onclick={() => (available ? installUpdate() : checkForUpdate(true))}
+            >
+              {available ? 'Install' : 'Check now'}
+            </Button>
+          </div>
         </Card.Content>
       </Card.Root>
+
+      <footer class="flex items-center justify-center gap-2 pb-2 text-xs text-muted-foreground sm:col-span-2">
+        <span class="tabular-nums">ViuMic {version}</span>
+        <span aria-hidden="true">·</span>
+        <button
+          class="flex items-center gap-1.5 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          onclick={() => openUrl(SPACIE_URL)}
+        >
+          <img src="/spacie-mark.svg" alt="" class="size-3.5" />
+          A Spacie project
+        </button>
+      </footer>
     </div>
   </main>
 </div>

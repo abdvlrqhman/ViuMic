@@ -143,7 +143,7 @@ The original target was ≤ 80 ms total. DPDFNet overshoots it by ~15 ms, a trad
 Root pnpm workspace (`pnpm dev` / `pnpm build`). `src-tauri` is a workspace crate; `ui` is Svelte 5 + Vite + TS (no SvelteKit), with the Saira font bundled locally.
 
 1. ✅ Commands: `get_state`, `set_settings` (save and apply live; device/model/hum restart the engine), `watch_meters` (`ipc::Channel`, 30 Hz).
-2. ✅ Settings: JSON in `%APPDATA%\com.viumic.desktop\settings.json` (confirmed written).
+2. ✅ Settings: JSON in `%APPDATA%\net.spacie.viumic\settings.json` (confirmed written).
 3. ✅ Tray: "Noise removal" check item, Open, Quit; left click opens; closing the window hides it.
 4. ✅ Single instance; Start with Windows (autostart plugin, launches with `--hidden` into the tray).
 5. ✅ Notes when VB-CABLE is missing, and when it's the Windows default **output** (the user hears nothing). A cable *default input* is fine: the app's "Automatic" mic skips it and picks the first real mic.
@@ -164,14 +164,16 @@ Root pnpm workspace (`pnpm dev` / `pnpm build`). `src-tauri` is a workspace crat
 └───────────────────────────────────────────────┘
 ```
 
-### Phase 3: release v0.1.0 (1 day)
+### Phase 3: release v0.1.0 (2026-11-11: built, see docs/RELEASING.md)
 
-1. GitHub Actions on `windows-latest`: `cargo fmt --check`, `clippy -D warnings`, `cargo test`, `tauri build` (NSIS installer).
-2. Release on tag push.
-3. The installer is unsigned. The README explains the SmartScreen "More info → Run anyway" step and why: signing costs money.
-4. LICENSE-MIT, LICENSE-APACHE, and third-party notices (DPDFNet Apache-2.0 text, since the model is embedded in the binary; nnnoiseless BSD-3; ONNX Runtime MIT; VB-CABLE readme).
-5. **Before publishing:** written OK from VB-Audio to bundle VB-CABLE in the installer (see Decisions → Virtual mic).
-6. Test the installer on a clean Windows VM: VB-CABLE silent install, the driver-trust prompt, the rename on first start, autostart, uninstall.
+1. ✅ GitHub Actions on `windows-latest` (`.github/workflows/ci.yml`): UI check, `cargo fmt --check`, `clippy -D warnings`, `cargo test`. Actions pinned by SHA, Dependabot weekly.
+2. ✅ Release on tag push (`release.yml`, tauri-action v1): draft release with the NSIS installer, signed `latest.json` + `.sig`, `SHA256SUMS.txt`. Fails if the tag and versions differ.
+3. ✅ The installer is unsigned. The README explains the SmartScreen "More info → Run anyway" step and why: signing costs money.
+4. ✅ LICENSE-MIT, LICENSE-APACHE, THIRD-PARTY-NOTICES.md, all three shipped inside the installer too.
+5. ✅ Auto-updates (`tauri-plugin-updater`, release builds only): checks on start and every 6 h, shows "Update ready", installs only on click (passive NSIS, one UAC prompt since the install is per-machine). Public repo abdvlrqhman/ViuMic, identifier `net.spacie.viumic`, publisher Spacie.
+6. **Before publishing:** written OK from VB-Audio to bundle VB-CABLE in the installer (see Decisions → Virtual mic).
+7. Test the installer on a clean Windows VM: VB-CABLE silent install, the driver-trust prompt, the rename on first start, autostart, uninstall.
+8. Prove an update end to end: install vN from GitHub, publish vN+1, click Install.
 
 ---
 
