@@ -35,7 +35,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_PropertiesSystem",
 ] }
 # The COM `#[interface]` macro expands to `windows_core` paths.
-windows-core = "0.62"
+windows-core = "0.100"
 
 # Task Manager / Explorer show "ViuMic.exe" (the version info already says ViuMic).
 [[bin]]
