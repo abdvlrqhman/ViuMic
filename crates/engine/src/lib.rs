@@ -81,8 +81,10 @@ pub fn process_buffer(
     let mut padded = input.to_vec();
     padded.resize((input.len() + delay).div_ceil(HOP) * HOP, 0.0);
     let mut out = vec![0.0; padded.len()];
-    for (i, o) in padded.chunks_exact(HOP).zip(out.chunks_exact_mut(HOP)) {
-        f(i.try_into()?, o.try_into()?)?;
+    // Both lengths are whole hops, so there's no remainder.
+    let (ins, outs) = (padded.as_chunks::<HOP>().0, out.as_chunks_mut::<HOP>().0);
+    for (i, o) in ins.iter().zip(outs) {
+        f(i, o)?;
     }
     out.drain(..delay);
     out.truncate(input.len());

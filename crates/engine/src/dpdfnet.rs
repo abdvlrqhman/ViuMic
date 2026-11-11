@@ -94,8 +94,14 @@ impl DpdfNet {
             *t = x * w;
         }
         self.fft.process(&mut self.time, &mut self.spec)?;
-        for (ri, c) in self.spec_ri.chunks_exact_mut(2).zip(&self.spec) {
-            ri.copy_from_slice(&[c.re, c.im]);
+        for (ri, c) in self
+            .spec_ri
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(&self.spec)
+        {
+            *ri = [c.re, c.im];
         }
 
         let outputs = self.session.run(ort::inputs![
@@ -103,8 +109,8 @@ impl DpdfNet {
             "state_in" => TensorRef::from_array_view(([self.state.len()], &self.state[..]))?,
         ])?;
         let (_, enhanced) = outputs["spec_e"].try_extract_tensor::<f32>()?;
-        for (c, ri) in self.spec.iter_mut().zip(enhanced.chunks_exact(2)) {
-            *c = Complex::new(ri[0], ri[1]);
+        for (c, [re, im]) in self.spec.iter_mut().zip(enhanced.as_chunks::<2>().0) {
+            *c = Complex::new(*re, *im);
         }
         let (_, state) = outputs["state_out"].try_extract_tensor::<f32>()?;
         self.state.copy_from_slice(state);
