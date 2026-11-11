@@ -10,6 +10,9 @@ updates:
     ignore:
       # Pinned on purpose: ort's release candidates change the session API between versions.
       - dependency-name: ort
+      # Must match the windows crate version cpal uses (COM interfaces are shared); bump by hand.
+      - dependency-name: windows
+      - dependency-name: windows-core
   - package-ecosystem: npm
     directories: [/, /ui]
     schedule:
