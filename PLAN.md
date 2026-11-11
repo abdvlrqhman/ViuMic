@@ -164,16 +164,16 @@ Root pnpm workspace (`pnpm dev` / `pnpm build`). `src-tauri` is a workspace crat
 └───────────────────────────────────────────────┘
 ```
 
-### Phase 3: release v0.1.0 (2026-11-11: built, see docs/RELEASING.md)
+### Phase 3: release v0.1.0 ✅ published 2026-11-11 (https://github.com/abdvlrqhman/ViuMic/releases/tag/v0.1.0)
 
 1. ✅ GitHub Actions on `windows-latest` (`.github/workflows/ci.yml`): UI check, `cargo fmt --check`, `clippy -D warnings`, `cargo test`. Actions pinned by SHA, Dependabot weekly.
 2. ✅ Release on tag push (`release.yml`, tauri-action v1): draft release with the NSIS installer, signed `latest.json` + `.sig`, `SHA256SUMS.txt`. Fails if the tag and versions differ.
 3. ✅ The installer is unsigned. The README explains the SmartScreen "More info → Run anyway" step and why: signing costs money.
 4. ✅ LICENSE-MIT, LICENSE-APACHE, THIRD-PARTY-NOTICES.md, all three shipped inside the installer too.
 5. ✅ Auto-updates (`tauri-plugin-updater`, release builds only): checks on start and every 6 h, shows "Update ready", installs only on click (passive NSIS, one UAC prompt since the install is per-machine). Public repo abdvlrqhman/ViuMic, identifier `net.spacie.viumic`, publisher Spacie.
-6. **Before publishing:** written OK from VB-Audio to bundle VB-CABLE in the installer (see Decisions → Virtual mic).
+6. ✅ VB-CABLE bundling: the user chose to publish on the strength of VB-Audio's licensing page (free app, visible credit and donation link). Written confirmation from VB-Audio is still worth having.
 7. Test the installer on a clean Windows VM: VB-CABLE silent install, the driver-trust prompt, the rename on first start, autostart, uninstall.
-8. Prove an update end to end: install vN from GitHub, publish vN+1, click Install.
+8. Prove an update end to end: install v0.1.0 from GitHub, publish v0.1.1, click Install. Verified so far: the v0.1.0 signature checks out against the app's public key (tampered file rejected), and `latest.json` and the installer download without a login. `main` is protected (ruleset "Protect main").
 
 ---
 
