@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+  README diagram. Render (from this folder, after `pnpm install`):
+  msedge --headless=new --hide-scrollbars --force-device-scale-factor=2 --window-size=1280,400
+         --screenshot=../how-it-works.png how-it-works.html
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: Geist;
+    src: url(../../../ui/node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2) format(woff2);
+    font-weight: 100 900;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 400px; overflow: hidden; }
+  body {
+    font-family: Geist, system-ui, sans-serif; color: #fafafa;
+    background: radial-gradient(520px 300px at 50% 45%, rgb(79 233 192 / 0.09), transparent 70%), #09090b;
+    display: flex; flex-direction: column; justify-content: center; padding: 0 56px; gap: 34px;
+  }
+  .row { display: grid; grid-template-columns: 1fr 120px 1.15fr 120px 1fr 120px 1fr; align-items: stretch; }
+  .node {
+    border-radius: 18px; padding: 24px 22px; min-height: 200px;
+    background: rgb(255 255 255 / 0.035); border: 1px solid rgb(255 255 255 / 0.1);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .node.main { border-color: rgb(79 233 192 / 0.5); background: rgb(79 233 192 / 0.06); box-shadow: 0 0 60px rgb(79 233 192 / 0.12); }
+  .icon { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: rgb(255 255 255 / 0.06); }
+  .icon svg { width: 26px; height: 26px; stroke: #e4e4e7; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .icon.logo { background: none; }
+  .icon.logo img { width: 48px; height: 48px; }
+  h2 { font-size: 23px; font-weight: 600; letter-spacing: -0.02em; }
+  p { font-size: 16.5px; line-height: 1.45; color: #a1a1aa; }
+  .wire { height: 60px; align-self: center; }
+  .note { text-align: center; font-size: 17px; color: #a1a1aa; }
+  .note b { color: #e4e4e7; font-weight: 550; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="node">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg></div>
+      <h2>Your mic</h2>
+      <p>Voice plus keyboard, fans, traffic and mains hum.</p>
+    </div>
+    <svg class="wire" id="w1" viewBox="0 0 120 60"></svg>
+    <div class="node main">
+      <div class="icon logo"><img src="../../../assets/logo.svg" alt=""></div>
+      <h2>ViuMic</h2>
+      <p>DPDFNet AI keeps the voice and drops the rest. On your CPU, about 50 ms.</p>
+    </div>
+    <svg class="wire" id="w2" viewBox="0 0 120 60"></svg>
+    <div class="node">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg></div>
+      <h2>ViuMic Microphone</h2>
+      <p>A virtual mic, set up by the installer.</p>
+    </div>
+    <svg class="wire" id="w3" viewBox="0 0 120 60"></svg>
+    <div class="node">
+      <div class="icon"><svg viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg></div>
+      <h2>Your apps</h2>
+      <p>Discord, Zoom, Teams, OBS, games: pick ViuMic Microphone.</p>
+    </div>
+  </div>
+  <p class="note"><b>Screen shares can't record it.</b> ViuMic sends audio to the virtual mic in exclusive mode, which loopback capture can't see.</p>
+<script>
+  let seed = 3
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+  const NS = 'http://www.w3.org/2000/svg'
+  function wire(id, noisy) {
+    const svg = document.getElementById(id)
+    const pts = []
+    for (let x = 8; x <= 104; x += noisy ? 1.6 : 1) {
+      const t = (x - 8) / 96
+      const env = noisy ? 9 : 16 * Math.exp(-(((t - 0.35) / 0.16) ** 2)) + 10 * Math.exp(-(((t - 0.72) / 0.12) ** 2))
+      const y = 30 + (noisy ? (rand() - 0.5) * 2 * env + Math.sin(x / 2.5) * 5 : Math.sin(x / 1.7) * env)
+      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`)
+    }
+    const p = document.createElementNS(NS, 'polyline')
+    p.setAttribute('points', pts.join(' '))
+    p.setAttribute('fill', 'none')
+    p.setAttribute('stroke', noisy ? '#6a72a8' : '#4fe9c0')
+    p.setAttribute('stroke-width', '1.6')
+    p.setAttribute('stroke-linejoin', 'round')
+    svg.appendChild(p)
+    const head = document.createElementNS(NS, 'path')
+    head.setAttribute('d', 'M106 24 L113 30 L106 36')
+    head.setAttribute('fill', 'none')
+    head.setAttribute('stroke', noisy ? '#6a72a8' : '#4fe9c0')
+    head.setAttribute('stroke-width', '2')
+    head.setAttribute('stroke-linecap', 'round')
+    head.setAttribute('stroke-linejoin', 'round')
+    svg.appendChild(head)
+  }
+  wire('w1', true)
+  wire('w2', false)
+  wire('w3', false)
+</script>
+</body>
+</html>
