@@ -1,8 +1,12 @@
 # Releasing
 
 1. Set the same version in `Cargo.toml` (`[workspace.package]`) and `src-tauri/tauri.conf.json`,
-   run `cargo check` so `Cargo.lock` follows, and commit.
-2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`. The **Release** workflow builds
+   run `cargo check` so `Cargo.lock` follows, and merge that through a pull request. `main` is
+   protected: changes land by pull request once the **Lint and test** check passes, and it can't
+   be force-pushed or deleted.
+2. Tag the merged commit and push the tag:
+   `git switch main && git pull && git tag -a v0.2.0 -m "ViuMic 0.2.0" && git push origin v0.2.0`.
+   The **Release** workflow builds
    the installer, the signed update files (`latest.json` and `.sig`) and `SHA256SUMS.txt` into a
    draft release. It stops early if the tag and the two versions don't match.
 3. Check the draft (try the installer), then publish it. Installed copies look for updates on
